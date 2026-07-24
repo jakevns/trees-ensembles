@@ -808,7 +808,15 @@ Typical default: $m = \sqrt{p}$ for classification, $m = p/3$ for regression.
 
 ## Fitting a Random Forest
 
+::: callout-tip
+This code chunk takes a long time to run due to computational complexity. Thus, we recommend running this using parallel processing.
+:::
+
+
 ```{r rf-fit}
+# Parallel processing
+
+
 rf_spec <- rand_forest(
   trees = 500, # number of trees — more is generally better (diminishing returns)
   mtry = tune(), # number of predictors considered at each split
