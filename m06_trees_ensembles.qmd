@@ -1,0 +1,1400 @@
+---
+title: "Module 6 — Trees and Ensembles"
+subtitle: "Applied Machine Learning for Marketing"
+author: "Jae Jung"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    toc-expand: 1
+    toc-location: right-body
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: show
+    code-tools: true
+    theme: cosmo
+    highlight-style: github
+    df-print: kable
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  freeze: true
+---
+
+# Learning Objectives {.unnumbered}
+
+By the end of this notebook you will be able to:
+
+1. Explain how decision trees choose splits using Gini impurity (classification)
+   and RSS (regression), and why a single deep tree overfits
+2. Interpret a fitted decision tree visually and extract business rules
+3. Explain how random forests improve on single trees through bagging and
+   feature randomness, and interpret variable importance plots
+4. Understand the sequential correction logic of boosted trees and explain
+   the role of `learn_rate`, `tree_depth`, and `trees`
+5. Apply `step_unknown()` and `one_hot = TRUE` in a tree-appropriate recipe
+6. Compare all three methods against a Lasso logistic regression baseline
+   using cross-validated metrics
+
+> **Textbook references:**
+> ISLR Chapter 8 (*Tree-Based Methods* — conceptual depth on trees, bagging,
+> random forests, boosting);
+> TMWR Chapter 12 (*Model Tuning and the Dangers of Overfitting* — tuning
+> workflow applied to tree hyperparameters)
+
+---
+
+# Setup
+
+```{r setup}
+library(tidymodels)
+library(tidyverse)
+library(rpart.plot) # visualize decision trees
+library(vip) # variable importance plots
+library(patchwork) # combining plots
+library(gt) # pretty tables
+tidymodels_prefer()
+
+set.seed(6540)
+```
+
+::: {.callout-note title="Package installation"}
+If `rpart.plot` is not yet installed, run:
+```r
+install.packages("rpart.plot")
+```
+The engines for decision trees (`rpart`), random forests (`ranger`), and
+boosted trees (`xgboost`) are installed automatically with `tidymodels`.
+:::
+
+---
+
+# The Digital Campaign Dataset
+
+## Data Generation
+
+We use a synthetic digital marketing campaign dataset with 4,000 customers.
+Two outcome variables serve as prediction targets throughout this module:
+
+- **`purchased`** (yes/no) — whether the customer converted during the
+  campaign period → **classification**
+- **`avg_order_amt`** ($) — the customer's average order value →
+  **regression**
+
+```{r create-data}
+set.seed(6540)
+n <- 4000
+
+campaign_data <- tibble(
+  customer_id = paste0("C", str_pad(1:n, 5, pad = "0")),
+  age = round(pmin(pmax(rnorm(n, mean = 42, sd = 12), 18), 80)),
+  income = round(rlnorm(n, meanlog = log(65000), sdlog = 0.55)),
+  recency_days = round(pmin(rexp(n, rate = 1 / 45), 365)),
+  freq_12mo = rpois(n, lambda = 3),
+  site_visits_30d = rpois(n, lambda = 3),
+  email_clicks_30d = rpois(n, lambda = 1.2),
+  discount_rate_seen = sample(
+    c(0, 0.05, 0.10, 0.15, 0.20, 0.25),
+    n,
+    replace = TRUE,
+    prob = c(0.20, 0.15, 0.20, 0.20, 0.15, 0.10)
+  ),
+  channel = sample(
+    c("email", "paid_search", "social", "direct", "display"),
+    n,
+    replace = TRUE,
+    prob = c(0.35, 0.22, 0.18, 0.15, 0.10)
+  ),
+  region = sample(
+    c("West", "South", "Midwest", "Northeast"),
+    n,
+    replace = TRUE
+  ),
+  loyalty_tier = factor(
+    sample(
+      c("Bronze", "Silver", "Gold", "Platinum"),
+      n,
+      replace = TRUE,
+      prob = c(0.45, 0.30, 0.18, 0.07)
+    ),
+    levels = c("Bronze", "Silver", "Gold", "Platinum"),
+    ordered = TRUE
+  ),
+  device = sample(
+    c("mobile", "desktop", "tablet"),
+    n,
+    replace = TRUE,
+    prob = c(0.58, 0.34, 0.08)
+  )
+) |>
+  mutate(
+    # cart_adds: derived from engagement variables
+    cart_adds_30d = rbinom(
+      n,
+      size = 5,
+      prob = pmin(
+        0.04 + 0.025 * site_visits_30d + 0.06 * email_clicks_30d,
+        0.70
+      )
+    ),
+
+    # avg_order_amt: basket size driven by income, loyalty, channel,
+    # device, discount, and a nonlinear discount × loyalty interaction
+    # (trees will discover this interaction automatically)
+    avg_order_amt = round(
+      rlnorm(
+        n,
+        meanlog = log(65) +
+          0.12 * log(income / 65000) + # income effect (modest)
+          case_when(
+            # loyalty tier effect
+            loyalty_tier == "Platinum" ~ 0.45,
+            loyalty_tier == "Gold" ~ 0.28,
+            loyalty_tier == "Silver" ~ 0.12,
+            TRUE ~ 0
+          ) +
+          case_when(
+            # channel effect
+            channel == "email" ~ 0.18,
+            channel == "direct" ~ 0.14,
+            channel == "paid_search" ~ 0.05,
+            channel == "social" ~ -0.08,
+            channel == "display" ~ -0.18,
+            TRUE ~ 0
+          ) +
+          case_when(
+            # device effect
+            device == "desktop" ~ 0.15,
+            device == "tablet" ~ 0.02,
+            device == "mobile" ~ -0.12,
+            TRUE ~ 0
+          ) +
+          0.12 * discount_rate_seen + # discount boosts basket
+          # interaction: discounts matter MORE for price-sensitive Bronze customers
+          if_else(loyalty_tier == "Bronze", 0.35 * discount_rate_seen, 0) +
+          0.08 * cart_adds_30d + # more cart adds → bigger basket
+          0.04 * freq_12mo, # frequent buyers → larger orders
+        sdlog = 0.38
+      ),
+      2
+    ),
+
+    # purchased: binary classification outcome
+    # driven by engagement, RFM, loyalty, channel, and nonlinear interactions
+    # hidden data-generating process — in real life we would not know this
+    purchased = {
+      loyalty_effect <- case_when(
+        loyalty_tier == "Bronze" ~ 0,
+        loyalty_tier == "Silver" ~ 0.55, # bumped from 0.40 for ordering
+        loyalty_tier == "Gold" ~ 0.90,
+        loyalty_tier == "Platinum" ~ 1.25
+      )
+      channel_effect <- case_when(
+        channel == "email" ~ 0.45,
+        channel == "paid_search" ~ 0.18,
+        channel == "social" ~ 0.12,
+        channel == "direct" ~ 0.30,
+        channel == "display" ~ -0.22
+      )
+      device_effect <- case_when(
+        device == "mobile" ~ 0.10,
+        device == "desktop" ~ 0.25,
+        device == "tablet" ~ -0.08
+      )
+      # nonlinear interactions — trees discover these; linear models miss them
+      discount_bronze_boost <- if_else(
+        discount_rate_seen >= 0.15 & loyalty_tier == "Bronze",
+        1.10,
+        0
+      )
+      high_engagement_boost <- if_else(
+        site_visits_30d >= 5 & email_clicks_30d >= 2,
+        1.15,
+        0
+      )
+      recent_frequent_boost <- if_else(
+        recency_days < 20 & freq_12mo >= 4,
+        0.80,
+        0
+      )
+      email_click_boost <- if_else(
+        channel == "email" & email_clicks_30d >= 2,
+        0.60,
+        0
+      )
+
+      logit_purchase <- -5.0 + # intercept → ~24% base rate
+        0.70 * log1p(site_visits_30d) +
+        0.55 * log1p(email_clicks_30d) +
+        0.75 * cart_adds_30d +
+        0.35 * freq_12mo -
+        0.022 * recency_days +
+        0.30 * log(income / 65000) +
+        loyalty_effect +
+        channel_effect +
+        device_effect +
+        discount_bronze_boost +
+        high_engagement_boost +
+        recent_frequent_boost +
+        email_click_boost +
+        rnorm(n, mean = 0, sd = 0.45)
+
+      factor(
+        rbinom(n, size = 1, prob = plogis(logit_purchase)),
+        levels = c(1, 0),
+        labels = c("yes", "no")
+      )
+    },
+
+    # 7% missingness in income; 5% in avg_order_amt (MAR)
+    income = if_else(runif(n) < 0.07, NA_real_, income),
+    avg_order_amt = if_else(runif(n) < 0.05, NA_real_, avg_order_amt)
+  ) |>
+  select(
+    customer_id,
+    age,
+    income,
+    recency_days,
+    freq_12mo,
+    avg_order_amt,
+    site_visits_30d,
+    email_clicks_30d,
+    discount_rate_seen,
+    cart_adds_30d,
+    channel,
+    region,
+    loyalty_tier,
+    device,
+    purchased
+  )
+
+glimpse(campaign_data)
+```
+
+## Outcome Variable Descriptions
+
+### `purchased` — Classification Outcome
+
+`purchased` reflects a realistic digital marketing conversion funnel with
+**four layers of signal**:
+
+::: {.callout-note title="What drives purchase probability"}
+**Behavioral engagement (strongest signals)**
+
+- `cart_adds_30d` — customers who add items to their cart are most likely
+  to convert; this is the single strongest predictor
+- `email_clicks_30d` and `site_visits_30d` — active engagement in the
+  30 days before the campaign predicts conversion
+
+**RFM signals**
+
+- `freq_12mo` — frequent past buyers are more likely to convert again
+- `recency_days` — customers who purchased more recently are more responsive
+
+**Customer value signals**
+
+- `loyalty_tier` — Platinum > Gold > Silver > Bronze conversion rates
+- `income` — modest positive effect
+
+**Campaign exposure signals**
+
+- `channel` — email and direct channels convert best; display converts worst
+- `discount_rate_seen` — higher discounts boost conversion, especially for
+  Bronze tier customers (nonlinear interaction)
+- `device` — desktop users convert at slightly higher rates than mobile
+
+**Nonlinear interactions (trees find these; linear models miss them)**
+
+- High discount × Bronze tier → extra conversion boost (price-sensitive customers)
+- High site visits AND email clicks → disproportionate engagement effect
+- Recently active AND frequent buyers → amplified recency × frequency boost
+- Email channel AND multiple email clicks → channel × engagement amplification
+:::
+
+```{r response-rate}
+campaign_data |>
+  count(purchased) |>
+  mutate(rate = round(n / sum(n), 3)) |>
+  gt() |>
+  tab_header(title = "Overall Purchase Rate")
+```
+
+```{r purchase-by-segment}
+# Purchase rate by loyalty tier and channel
+p1 <- campaign_data |>
+  group_by(loyalty_tier) |>
+  summarise(rate = mean(purchased == "yes")) |>
+  ggplot(aes(x = loyalty_tier, y = rate, fill = loyalty_tier)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_manual(
+    values = c("#9e9e9e", "#C0A060", "#B0B0B0", "#4A90D9")
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Purchase Rate by Loyalty Tier", x = NULL, y = "Purchase rate") +
+  theme_minimal(base_size = 11)
+
+p2 <- campaign_data |>
+  group_by(channel) |>
+  summarise(rate = mean(purchased == "yes")) |>
+  ggplot(aes(x = reorder(channel, rate), y = rate)) +
+  geom_col(fill = "#154734", alpha = 0.85) +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip() +
+  labs(title = "Purchase Rate by Channel", x = NULL, y = "Purchase rate") +
+  theme_minimal(base_size = 11)
+
+p1 + p2
+```
+
+### `avg_order_amt` — Regression Outcome
+
+`avg_order_amt` reflects how basket size varies with customer characteristics
+and campaign context:
+
+::: {.callout-note title="What drives average order value"}
+**Income** (moderate, r ≈ 0.15): higher-income customers tend to buy
+more expensive items or fill larger baskets.
+
+**Loyalty tier** (clear gradient): Platinum members shop across more
+categories and are less price-constrained than Bronze members.
+
+- Bronze ≈ \$95 | Silver ≈ \$106 | Gold ≈ \$123 | Platinum ≈ \$150
+
+**Channel** (directional): email and direct traffic drives deliberate,
+larger purchases; social and display drive impulse buys with smaller baskets.
+
+- Email ≈ \$118 | Direct ≈ \$118 | Social ≈ \$91 | Display ≈ \$83
+
+**Device** (meaningful): desktop users complete larger, more intentional
+purchases; mobile skews toward smaller, faster transactions.
+
+- Desktop ≈ \$127 | Tablet ≈ \$119 | Mobile ≈ \$94
+
+**Cart adds** (strongest behavioral signal, r ≈ 0.15): customers who
+added more items to their cart predictably complete larger orders.
+
+**Nonlinear interaction**: high discounts increase basket size more for
+Bronze customers (price-sensitive) than for Platinum (already committed).
+Trees will find this interaction; linear regression will need it explicitly.
+:::
+
+```{r order-amt-eda}
+p3 <- ggplot(campaign_data, aes(x = avg_order_amt)) +
+  geom_histogram(bins = 40, fill = "#154734", color = "white", alpha = 0.85) +
+  labs(
+    title = "Distribution of Average Order Amount",
+    x = "Average order amount ($)",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 11)
+
+p4 <- campaign_data |>
+  filter(!is.na(avg_order_amt)) |>
+  group_by(loyalty_tier) |>
+  summarise(mean_order = mean(avg_order_amt)) |>
+  ggplot(aes(x = loyalty_tier, y = mean_order, fill = loyalty_tier)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_manual(
+    values = c("#9e9e9e", "#C0A060", "#B0B0B0", "#4A90D9")
+  ) +
+  labs(
+    title = "Mean Order Amount by Loyalty Tier",
+    x = NULL,
+    y = "Mean order amount ($)"
+  ) +
+  theme_minimal(base_size = 11)
+
+p3 + p4
+```
+
+---
+
+# Train/Test Split and Recipes
+
+## Split
+
+```{r split}
+set.seed(617)
+camp_split <- initial_split(campaign_data, prop = 0.80, strata = purchased)
+camp_train <- training(camp_split)
+camp_test <- testing(camp_split)
+
+cat("Training rows:", nrow(camp_train), "\n")
+cat("Test rows    :", nrow(camp_test), "\n")
+cat(
+  "Purchase rate (train):",
+  round(mean(camp_train$purchased == "yes"), 3),
+  "\n"
+)
+cat(
+  "Purchase rate (test) :",
+  round(mean(camp_test$purchased == "yes"), 3),
+  "\n"
+)
+```
+
+## Why Trees Need a Different Recipe
+
+Tree-based models have fundamentally different preprocessing requirements
+than linear models like Lasso logistic regression.
+
+::: {.callout-note title="What trees DON'T need — and why"}
+**`step_normalize()`** — Trees split on *rank order*, not *magnitude*.
+A split at "income > 60,000" produces identical results whether income
+is on the dollar scale or the normalized (z-score) scale. Normalization
+adds no value and just makes coefficient interpretation harder.
+
+**`step_log()` on predictors** — Logarithm is a monotone transformation —
+it preserves rank order. If the optimal split for `income` in dollar scale
+is at \$60,000, the optimal split in log scale is at log(\$60,000). The
+tree finds the same split either way. No need to transform predictors.
+
+**Consequence**: the recipe for trees is simpler and produces more
+interpretable split values (dollar amounts, raw counts) in the tree output.
+:::
+
+## Classification Recipe
+
+```{r class-recipe}
+# Classification recipe — simpler than Module 2's Lasso recipe
+class_rec <- recipe(
+  purchased ~ customer_id +
+    age +
+    income +
+    recency_days +
+    freq_12mo +
+    avg_order_amt +
+    site_visits_30d +
+    email_clicks_30d +
+    discount_rate_seen +
+    cart_adds_30d +
+    channel +
+    region +
+    loyalty_tier +
+    device,
+  data = camp_train
+) |>
+  update_role(customer_id, new_role = "ID") |>
+  step_impute_median(all_numeric_predictors()) |> # still needed — trees can't handle NA
+  step_unknown(all_nominal_predictors()) |> # NEW: handle unseen factor levels
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # NEW: one-hot for trees
+  step_zv(all_predictors())
+
+class_rec
+```
+
+::: {.callout-note title="Two new recipe steps for tree models"}
+**`step_unknown()`** — In production, new data may contain factor levels
+not seen during training (e.g., a new marketing channel is launched after
+the model was built). Without handling, this causes a prediction error.
+`step_unknown()` explicitly encodes unseen levels as a new "unknown"
+category rather than crashing. This is a production-readiness step that
+becomes important when models are deployed.
+
+**`one_hot = TRUE` in `step_dummy()`** — Standard dummy encoding creates
+$k - 1$ columns per factor (dropping one reference level) to avoid
+multicollinearity in linear models. Trees have no multicollinearity problem
+— they can split on any column independently. Using `one_hot = TRUE`
+creates all $k$ columns, which sometimes helps trees find better splits
+by having each category available as a direct split candidate. For example,
+with `one_hot = TRUE` the tree can split directly on `channel_email == 1`
+rather than inferring the email effect from the remaining categories.
+:::
+
+## Regression Recipe
+
+```{r reg-recipe}
+# Regression recipe: predict avg_order_amt
+# log-transform the OUTCOME (not predictors) to handle right skew
+reg_rec <- recipe(
+  avg_order_amt ~ customer_id +
+    age +
+    income +
+    recency_days +
+    freq_12mo +
+    site_visits_30d +
+    email_clicks_30d +
+    discount_rate_seen +
+    cart_adds_30d +
+    channel +
+    region +
+    loyalty_tier +
+    device,
+  data = camp_train
+) |>
+  update_role(customer_id, new_role = "ID") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_mutate(avg_order_amt = log(avg_order_amt)) |> # log-transform OUTCOME
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
+  step_zv(all_predictors())
+```
+
+::: {.callout-note title="Why log-transform the outcome but not the predictors?"}
+`avg_order_amt` is right-skewed — a few very large orders pull the
+distribution out. For regression trees, the split criterion is **RSS
+(Residual Sum of Squares)**: the algorithm finds the split that minimizes
+the total squared deviation from the group mean within each node.
+
+Squared errors punish large outliers heavily — a single \$500 order
+can disproportionately influence which split is chosen. Log-transforming
+the outcome compresses the scale, reducing the leverage of outliers
+on split decisions and producing a more balanced tree.
+
+Note that predictions will be on the log scale — you need to
+`exp()` them to get back to dollar amounts.
+
+We do **not** log-transform the predictors because (as explained above)
+trees are rank-order invariant — monotone predictor transforms have no
+effect on splits.
+:::
+
+## Cross-Validation Folds
+
+```{r cv-folds}
+set.seed(2025)
+camp_folds <- vfold_cv(camp_train, v = 10, strata = purchased)
+camp_folds
+```
+
+---
+
+# Decision Trees
+
+## How Decision Trees Work
+
+A decision tree recursively splits the training data into regions by
+asking a series of binary questions: "Is `cart_adds_30d` ≥ 2?" → yes/no,
+then "Is `recency_days` < 30?" → yes/no, and so on.
+
+**For classification trees** — each split is chosen to minimize
+**Gini impurity** in the resulting nodes:
+
+$$G = 1 - \sum_{k=1}^{K} \hat{p}_{mk}^2$$
+
+where $\hat{p}_{mk}$ is the proportion of class $k$ in node $m$.
+A node with all customers in the same class has $G = 0$ (pure).
+A node with equal class proportions has $G$ close to 0.5 (impure).
+The tree chooses the split that produces the largest *decrease* in
+weighted Gini impurity across the two child nodes.
+
+**For regression trees** — each split minimizes the
+**Residual Sum of Squares (RSS)**:
+
+$$RSS = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
+
+where $\bar{y}_{R_m}$ is the mean response in region $R_m$.
+
+::: {.callout-note title="Why a single deep tree overfits"}
+A fully grown tree will keep splitting until every leaf contains a single
+training observation — achieving 100% training accuracy but completely
+memorizing noise. This is the same overfitting problem we saw with KNN
+at k=1 in Module 5. The solution is **pruning**: limiting tree complexity
+via the `cost_complexity` (cp) hyperparameter, which adds a penalty for
+each additional leaf node.
+:::
+
+## Fitting a Classification Tree
+
+```{r tree-fit}
+tree_spec <- decision_tree(
+  cost_complexity = 0.001, # cp: penalty per leaf — smaller = deeper tree
+  tree_depth = 10, # maximum depth allowed
+  min_n = 20 # minimum observations per node to allow a split
+) |>
+  set_engine("rpart") |>
+  set_mode("classification")
+
+tree_wf <- workflow() |>
+  add_recipe(class_rec) |>
+  add_model(tree_spec)
+
+tree_fit <- fit(tree_wf, data = camp_train)
+```
+
+## Visualizing the Tree
+
+```{r tree-plot, fig.height=7, fig.width=12}
+tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot(
+    type = 4,
+    extra = 104, # show class probability + % of observations
+    box.palette = "GnBu",
+    shadow.col = "gray",
+    nn = TRUE,
+    main = "Decision Tree — Purchase Prediction"
+  )
+```
+
+::: {.callout-note title="How to read the tree"}
+Each node shows three numbers: the **predicted class** (yes/no), the
+**probability of "yes"**, and the **percentage of training observations**
+that reach that node.
+
+- **Root node** (top): the starting point — all training data, predicting
+  the majority class at the overall response rate
+- **Internal nodes**: each shows the split condition (e.g.,
+  `cart_adds_30d < 2`); left branch = TRUE, right branch = FALSE
+- **Leaf nodes** (bottom): terminal predictions — the class and probability
+  assigned to any new customer who follows that path through the tree
+
+The first few splits reveal the most important predictors — the algorithm
+chose them because they produce the largest Gini reduction.
+:::
+
+## Reading Business Rules from the Tree
+
+```{r tree-rules}
+# Extract rules from the tree as text
+library(rpart.plot)
+tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot::rpart.rules(cover = TRUE, style = "tall")
+```
+
+## Classification Tree Performance
+
+```{r tree-metrics}
+tree_preds <- augment(tree_fit, new_data = camp_test)
+
+tree_preds |>
+  metric_set(accuracy, roc_auc, sens, spec)(
+    truth = purchased,
+    estimate = .pred_class,
+    .pred_yes
+  )
+
+# Confusion matrix
+conf_mat(tree_preds, truth = purchased, estimate = .pred_class) |>
+  autoplot(type = "heatmap")
+```
+
+## The Overfitting Problem — Shallow vs. Deep Tree
+
+```{r tree-overfit}
+# Compare a very deep tree vs. a pruned tree
+fit_tree_cp <- function(cp_val) {
+  spec <- decision_tree(cost_complexity = cp_val) |>
+    set_engine("rpart") |>
+    set_mode("classification")
+  wf <- workflow() |> add_recipe(class_rec) |> add_model(spec)
+  list(
+    train = augment(fit(wf, data = camp_train), new_data = camp_train) |>
+      roc_auc(truth = purchased, .pred_yes) |>
+      mutate(cp = cp_val, data = "train"),
+    test = augment(fit(wf, data = camp_train), new_data = camp_test) |>
+      roc_auc(truth = purchased, .pred_yes) |>
+      mutate(cp = cp_val, data = "test")
+  )
+}
+
+cp_vals <- c(0.0001, 0.001, 0.005, 0.01, 0.05)
+overfit_results <- map(cp_vals, fit_tree_cp) |>
+  map(bind_rows) |>
+  bind_rows()
+
+overfit_results |>
+  select(cp, data, .estimate) |>
+  pivot_wider(names_from = data, values_from = .estimate) |>
+  mutate(gap = round(train - test, 4)) |>
+  arrange(cp)
+```
+
+```{r tree-overfit-plot}
+overfit_results |>
+  ggplot(aes(x = log10(cp), y = .estimate, color = data, group = data)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c(train = "#B08D57", test = "#154734")) +
+  labs(
+    title = "Decision Tree — Train vs. Test AUC Across Pruning Levels",
+    subtitle = "Small cp = deep (complex) tree; large cp = shallow (pruned) tree",
+    x = "log10(cost_complexity)",
+    y = "ROC AUC",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note title="Reading the overfitting plot"}
+As `cost_complexity` decreases (left side of the x-axis), the tree grows
+deeper — training AUC climbs toward 1.0 as the tree memorizes the data.
+Test AUC *peaks at an intermediate complexity level* and then declines —
+the tree has started fitting noise that doesn't generalize.
+
+The gap between training and test AUC is the **resubstitution gap** from
+Module 3. For trees, this gap can be enormous — a deep tree achieving
+near-100% training AUC is the most extreme overfitting case we've seen
+in this course.
+:::
+
+## Regression Tree
+
+```{r reg-tree-fit}
+reg_tree_spec <- decision_tree(
+  cost_complexity = 0.001,
+  tree_depth = 8,
+  min_n = 25
+) |>
+  set_engine("rpart") |>
+  set_mode("regression")
+
+reg_tree_wf <- workflow() |> add_recipe(reg_rec) |> add_model(reg_tree_spec)
+reg_tree_fit <- fit(reg_tree_wf, data = camp_train)
+
+# Evaluate on test set (predictions are on log scale — back-transform with exp)
+reg_tree_preds <- augment(reg_tree_fit, new_data = camp_test) |>
+  mutate(
+    pred_dollar = exp(.pred), # back-transform to dollars
+    actual_dollar = avg_order_amt # already in dollars (not log-transformed in test)
+  )
+
+# Note: actual avg_order_amt in test set is on the original dollar scale
+# but the recipe log-transformed it during training —
+# we evaluate on the original scale for interpretability
+reg_tree_preds |>
+  summarise(
+    rmse = sqrt(mean((pred_dollar - actual_dollar)^2, na.rm = TRUE)),
+    mae = mean(abs(pred_dollar - actual_dollar), na.rm = TRUE),
+    r2 = cor(pred_dollar, actual_dollar, use = "complete.obs")^2
+  )
+```
+
+```{r reg-tree-plot, fig.height=6, fig.width=10}
+reg_tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot(
+    type = 4,
+    extra = 1,
+    main = "Regression Tree — Average Order Amount (log scale)",
+    box.palette = "Blues"
+  )
+```
+
+---
+
+# Random Forests
+
+## From One Tree to Many — Bagging
+
+A single decision tree is **high variance** — small changes in the training
+data can produce very different trees. The solution is **bagging (Bootstrap
+AGGregating)**:
+
+1. Draw $B$ bootstrap samples from the training data (sample with replacement)
+2. Fit a full decision tree on each bootstrap sample
+3. **Average** the predictions across all $B$ trees (regression) or
+   **take a majority vote** (classification)
+
+Averaging over many trees reduces variance dramatically while keeping
+bias roughly the same — the key insight behind ensemble methods.
+
+::: {.callout-note title="Bagging alone is not enough — feature randomness"}
+If all predictors are strong, every bagged tree will tend to use the same
+top predictors at its first split. The resulting trees are **highly
+correlated** — averaging correlated predictions doesn't reduce variance
+as much as averaging independent predictions.
+
+**Random forests** fix this with **feature randomness**: at each split,
+only a random subset of $m$ predictors is considered (controlled by `mtry`).
+This forces trees to use different predictors, de-correlating them and
+producing larger variance reduction when averaged.
+
+Typical default: $m = \sqrt{p}$ for classification, $m = p/3$ for regression.
+:::
+
+## Fitting a Random Forest
+
+```{r rf-fit}
+rf_spec <- rand_forest(
+  trees = 500, # number of trees — more is generally better (diminishing returns)
+  mtry = tune(), # number of predictors considered at each split
+  min_n = tune() # minimum node size
+) |>
+  set_engine("ranger", importance = "permutation") |> # enables variable importance
+  set_mode("classification")
+
+rf_wf <- workflow() |>
+  add_recipe(class_rec) |>
+  add_model(rf_spec)
+
+# Quick tuning — small grid for demonstration
+set.seed(2025)
+rf_grid <- grid_regular(
+  mtry(range = c(3, 10)),
+  min_n(range = c(5, 30)),
+  levels = 3
+)
+
+rf_tune_results <- tune_grid(
+  rf_wf,
+  resamples = camp_folds,
+  grid = rf_grid,
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+autoplot(rf_tune_results) +
+  labs(title = "Random Forest Tuning — AUC Across mtry and min_n") +
+  theme_minimal(base_size = 11)
+```
+
+```{r rf-best}
+best_rf <- select_best(rf_tune_results, metric = "roc_auc")
+best_rf
+
+final_rf_wf <- finalize_workflow(rf_wf, best_rf)
+final_rf_fit <- fit(final_rf_wf, data = camp_train)
+```
+
+## Random Forest Performance
+
+```{r rf-metrics}
+rf_preds <- augment(final_rf_fit, new_data = camp_test)
+
+rf_preds |>
+  metric_set(accuracy, roc_auc, sens, spec)(
+    truth = purchased,
+    estimate = .pred_class,
+    .pred_yes
+  )
+```
+
+## The Effect of `mtry` — Feature Randomness
+
+```{r mtry-effect}
+# Show how AUC changes with mtry at the best min_n
+rf_tune_results |>
+  collect_metrics() |>
+  filter(.metric == "roc_auc") |>
+  group_by(mtry, min_n) |>
+  summarise(mean_auc = round(mean(mean), 4), .groups = "drop") |>
+  arrange(desc(mean_auc))
+```
+
+::: {.callout-note title="Interpreting mtry"}
+A small `mtry` forces each tree to consider fewer predictors — trees
+become more diverse (less correlated) but individually weaker. A large
+`mtry` approaches bagging (all predictors available at each split) — trees
+are stronger individually but more correlated with each other.
+
+The optimal `mtry` balances individual tree quality against ensemble
+diversity. With ~15 predictors in this dataset, `mtry` values between
+3 and 8 typically work best.
+:::
+
+## Out-of-Bag (OOB) Error
+
+```{r oob-error}
+# ranger computes OOB error automatically during training
+# Extract it from the fitted engine
+oob_error <- final_rf_fit |>
+  extract_fit_engine() |>
+  _$prediction.error
+
+cat("OOB error (misclassification rate):", round(oob_error, 4), "\n")
+cat("OOB accuracy                       :", round(1 - oob_error, 4), "\n")
+
+# Compare to CV accuracy
+rf_tune_results |>
+  collect_metrics() |>
+  filter(.metric == "accuracy") |>
+  summarise(cv_accuracy = round(mean(mean), 4))
+```
+
+::: {.callout-note title="What is OOB error?"}
+Each bootstrap sample in a random forest leaves out approximately **37%
+of the training observations** (observations not selected in that particular
+sample). These *out-of-bag* observations can be used to evaluate each tree
+without a separate validation set — the OOB error is essentially a
+free cross-validation estimate computed during training.
+
+OOB error tends to be slightly pessimistic compared to CV (because each
+tree only uses ~63% of the data) but is remarkably accurate and much
+faster to compute. For large forests and large datasets, OOB can replace
+CV entirely.
+:::
+
+## Variable Importance
+
+```{r vip-rf, fig.height=6}
+final_rf_fit |>
+  extract_fit_parsnip() |>
+  vip(
+    num_features = 15,
+    aesthetics = list(fill = "#154734", color = "white", alpha = 0.85)
+  ) +
+  labs(
+    title = "Random Forest — Permutation Variable Importance",
+    subtitle = "How much does prediction accuracy drop when each variable is randomly shuffled?"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note title="Permutation importance vs. impurity importance"}
+The `ranger` engine supports two importance measures:
+
+**Impurity importance** (Gini-based): measures how much each variable
+decreases weighted Gini impurity across all splits in the forest. Fast
+to compute but tends to **favor variables with many unique values**
+(continuous variables and high-cardinality factors) — even if those
+variables aren't truly important predictors.
+
+**Permutation importance** (what we use here): for each variable, randomly
+shuffle its values across all test observations and measure how much
+prediction accuracy drops. A variable that is truly important will cause
+a large accuracy drop when shuffled; a noise variable will cause little
+change. This is more reliable but slower to compute.
+
+We use `importance = "permutation"` in the engine call for this reason —
+it gives a fairer comparison across predictors with different scales and
+cardinalities.
+:::
+
+---
+
+# Boosted Trees
+
+## The Sequential Correction Idea
+
+Random forests train trees **in parallel** — each tree sees a different
+bootstrap sample but they are independent of each other. **Boosting** takes
+a fundamentally different approach: trees are trained **sequentially**, with
+each new tree focusing on the errors made by the current ensemble.
+
+The intuition:
+
+1. Fit a shallow tree to the training data → make predictions
+2. Compute the **residuals** (what the ensemble got wrong)
+3. Fit the next tree to predict those residuals
+4. Add the new tree's predictions to the ensemble (scaled by `learn_rate`)
+5. Repeat $B$ times
+
+Each iteration corrects the mistakes of the previous ensemble — slowly
+building up a powerful model from many weak ones. This is the core idea
+of **gradient boosting**.
+
+::: {.callout-note title="The three key hyperparameters"}
+**`trees`** — how many sequential trees to fit. More trees = more
+correction of errors, but also more risk of overfitting if `learn_rate`
+is too high.
+
+**`learn_rate`** (shrinkage) — how much each tree's contribution is
+scaled before adding to the ensemble. Small `learn_rate` (e.g., 0.01)
+learns slowly, requires more trees, but generalizes better. Large
+`learn_rate` (e.g., 0.3) learns fast but can overshoot.
+
+**`tree_depth`** — how deep each individual tree is. Boosting typically
+uses **shallow trees** (depth 1–6), unlike random forests which use
+full-depth trees. Shallow trees are weak learners — but boosting
+combines many of them into a strong ensemble. Deeper trees can model
+more complex interactions per step but increase overfitting risk.
+:::
+
+## Fitting Boosted Trees (XGBoost)
+
+```{r boost-fit}
+boost_spec <- boost_tree(
+  trees = 500,
+  tree_depth = tune(),
+  learn_rate = tune(),
+  min_n = tune()
+) |>
+  set_engine("xgboost") |>
+  set_mode("classification")
+
+boost_wf <- workflow() |>
+  add_recipe(class_rec) |>
+  add_model(boost_spec)
+
+# Small grid for demonstration
+set.seed(2025)
+boost_grid <- grid_regular(
+  tree_depth(range = c(2, 6)),
+  learn_rate(range = c(-3, -1)), # log10 scale: 0.001 to 0.1
+  min_n(range = c(5, 30)),
+  levels = 3
+)
+
+boost_tune_results <- tune_grid(
+  boost_wf,
+  resamples = camp_folds,
+  grid = boost_grid,
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+autoplot(boost_tune_results) +
+  labs(title = "XGBoost Tuning — AUC Across learn_rate and tree_depth") +
+  theme_minimal(base_size = 11)
+```
+
+```{r boost-best}
+best_boost <- select_best(boost_tune_results, metric = "roc_auc")
+best_boost
+
+final_boost_wf <- finalize_workflow(boost_wf, best_boost)
+final_boost_fit <- fit(final_boost_wf, data = camp_train)
+```
+
+## Boosted Tree Performance
+
+```{r boost-metrics}
+boost_preds <- augment(final_boost_fit, new_data = camp_test)
+
+boost_preds |>
+  metric_set(accuracy, roc_auc, sens, spec)(
+    truth = purchased,
+    estimate = .pred_class,
+    .pred_yes
+  )
+```
+
+## The `learn_rate` × `trees` Tradeoff
+
+```{r learn-rate-effect}
+# Fit models with different learn_rate values at fixed tree_depth
+fit_boost_lr <- function(lr) {
+  spec <- boost_tree(
+    trees = 300,
+    learn_rate = lr,
+    tree_depth = best_boost$tree_depth,
+    min_n = best_boost$min_n
+  ) |>
+    set_engine("xgboost") |>
+    set_mode("classification")
+
+  wf <- workflow() |> add_recipe(class_rec) |> add_model(spec)
+  fit_obj <- fit(wf, data = camp_train)
+
+  bind_rows(
+    augment(fit_obj, new_data = camp_train) |>
+      roc_auc(truth = purchased, .pred_yes) |>
+      mutate(learn_rate = lr, data = "train"),
+    augment(fit_obj, new_data = camp_test) |>
+      roc_auc(truth = purchased, .pred_yes) |>
+      mutate(learn_rate = lr, data = "test")
+  )
+}
+
+lr_comparison <- map_dfr(c(0.01, 0.05, 0.10, 0.30), fit_boost_lr)
+
+lr_comparison |>
+  select(learn_rate, data, .estimate) |>
+  pivot_wider(names_from = data, values_from = .estimate) |>
+  mutate(gap = round(train - test, 4)) |>
+  arrange(learn_rate)
+```
+
+::: {.callout-note title="Reading the learn_rate comparison"}
+Small `learn_rate` (0.01): train and test AUC are close — the model is
+learning slowly and generalizing well but may need many more trees to
+reach peak performance.
+
+Large `learn_rate` (0.30): training AUC is very high but test AUC may
+be lower — the model is taking large steps and overshooting the optimal
+solution, introducing variance that hurts generalization.
+
+The practical recommendation: **use a small `learn_rate` (0.01–0.05)
+with more trees**. This is almost always the most reliable combination
+in marketing applications.
+:::
+
+## Variable Importance
+
+```{r vip-boost, fig.height=6}
+final_boost_fit |>
+  extract_fit_parsnip() |>
+  vip(
+    num_features = 15,
+    aesthetics = list(fill = "#B08D57", color = "white", alpha = 0.85)
+  ) +
+  labs(
+    title = "XGBoost — Variable Importance",
+    subtitle = "Gain: improvement in loss from splits using each variable"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+# Model Comparison
+
+## All Models on the Same Test Set
+
+```{r model-compare}
+# Lasso logistic regression baseline (same recipe as Module 2 approach)
+lasso_rec <- recipe(
+  purchased ~ customer_id +
+    age +
+    income +
+    recency_days +
+    freq_12mo +
+    avg_order_amt +
+    site_visits_30d +
+    email_clicks_30d +
+    discount_rate_seen +
+    cart_adds_30d +
+    channel +
+    region +
+    loyalty_tier +
+    device,
+  data = camp_train
+) |>
+  update_role(customer_id, new_role = "ID") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_log(income, avg_order_amt, base = 10, offset = 1) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_ordinalscore(loyalty_tier) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_zv(all_predictors())
+
+lasso_spec <- logistic_reg(penalty = 0.01, mixture = 1) |>
+  set_engine("glmnet") |>
+  set_mode("classification")
+
+lasso_wf <- workflow() |> add_recipe(lasso_rec) |> add_model(lasso_spec)
+lasso_fit <- fit(lasso_wf, data = camp_train)
+lasso_preds <- augment(lasso_fit, new_data = camp_test)
+
+# Combine all test-set results
+all_model_metrics <- bind_rows(
+  lasso_preds |>
+    metric_set(roc_auc, accuracy)(
+      truth = purchased,
+      estimate = .pred_class,
+      .pred_yes
+    ) |>
+    mutate(model = "Lasso LR (baseline)"),
+  tree_preds |>
+    metric_set(roc_auc, accuracy)(
+      truth = purchased,
+      estimate = .pred_class,
+      .pred_yes
+    ) |>
+    mutate(model = "Decision Tree"),
+  rf_preds |>
+    metric_set(roc_auc, accuracy)(
+      truth = purchased,
+      estimate = .pred_class,
+      .pred_yes
+    ) |>
+    mutate(model = "Random Forest"),
+  boost_preds |>
+    metric_set(roc_auc, accuracy)(
+      truth = purchased,
+      estimate = .pred_class,
+      .pred_yes
+    ) |>
+    mutate(model = "XGBoost")
+)
+
+all_model_metrics |>
+  filter(.metric == "roc_auc") |>
+  select(model, roc_auc = .estimate) |>
+  arrange(desc(roc_auc))
+```
+
+## ROC Curves — All Models Overlaid
+
+```{r roc-compare}
+roc_data <- bind_rows(
+  lasso_preds |>
+    roc_curve(truth = purchased, .pred_yes) |>
+    mutate(model = "Lasso LR"),
+  tree_preds |>
+    roc_curve(truth = purchased, .pred_yes) |>
+    mutate(model = "Decision Tree"),
+  rf_preds |>
+    roc_curve(truth = purchased, .pred_yes) |>
+    mutate(model = "Random Forest"),
+  boost_preds |>
+    roc_curve(truth = purchased, .pred_yes) |>
+    mutate(model = "XGBoost")
+)
+
+ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path(linewidth = 0.9) +
+  geom_abline(linetype = "dashed", color = "gray60") +
+  scale_color_manual(
+    values = c(
+      "Lasso LR" = "#888888",
+      "Decision Tree" = "#B08D57",
+      "Random Forest" = "#154734",
+      "XGBoost" = "#4A90D9"
+    )
+  ) +
+  labs(
+    title = "ROC Curves — All Models",
+    subtitle = "Test set performance; dashed line = random chance",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+## Model Comparison Summary
+
+```{r compare-table}
+all_model_metrics |>
+  select(model, .metric, .estimate) |>
+  pivot_wider(names_from = .metric, values_from = .estimate) |>
+  arrange(desc(roc_auc)) |>
+  gt() |>
+  tab_header(title = "Test Set Performance — All Models") |>
+  fmt_number(columns = c(roc_auc, accuracy), decimals = 4)
+```
+
+::: {.callout-note title="Why ensemble methods typically outperform single trees"}
+A single decision tree is a **high-variance** model — it can fit the
+training data well but is sensitive to which particular observations
+happened to be in the training set. Both random forests and boosting
+address this:
+
+- **Random forests** reduce variance by averaging many decorrelated trees
+- **XGBoost** reduces bias by sequentially correcting prediction errors
+
+The Lasso logistic regression (linear model) provides a useful baseline:
+if tree methods don't outperform it, the relationships in the data are
+likely approximately linear and the simpler model is preferable (parsimony).
+
+When tree methods do outperform Lasso — as they typically will here,
+given the nonlinear interactions built into the data-generating process —
+it's because they are *discovering the interactions automatically* rather
+than requiring the analyst to specify them in advance.
+:::
+
+---
+
+# Summary
+
+## Three Methods at a Glance
+
+| Method | Key idea | Strengths | Weaknesses |
+|---|---|---|---|
+| **Decision tree** | Recursive binary splits | Interpretable; visual; handles interactions | High variance; overfits easily without pruning |
+| **Random forest** | Bagging + feature randomness | Low variance; robust; built-in OOB validation | Less interpretable; slow with many trees |
+| **XGBoost** | Sequential error correction | Often best accuracy; flexible | Many hyperparameters; slowest to tune |
+
+## When to Use Each
+
+| Situation | Recommended |
+|---|---|
+| Need to explain the model to non-technical stakeholders | Decision tree (visualizable rules) |
+| Reliable performance with minimal tuning | Random forest |
+| Maximum predictive accuracy; time to tune carefully | XGBoost |
+| Linear relationships dominate; many correlated predictors | Lasso LR (from Module 4) |
+
+## Recipe Checklist for Trees
+
+```r
+recipe(outcome ~ ., data = train) |>
+  step_impute_median(all_numeric_predictors()) |>  # ✓ needed
+  step_unknown(all_nominal_predictors()) |          # ✓ production safety
+  step_dummy(all_nominal_predictors(),              # ✓ needed
+             one_hot = TRUE) |                      # ✓ helps trees
+  step_zv(all_predictors())                         # ✓ safety net
+  # step_normalize()  ← NOT needed for trees
+  # step_log()        ← NOT needed for predictors (rank-invariant)
+```
+
+---
+
+# Exercises
+
+## ✏️ Exercise 6.1 — Decision Tree Pruning
+
+Using the `fit_tree_cp()` function from Section 4.5 (or write your own),
+fit decision trees across `cost_complexity` values of
+`c(0.0001, 0.001, 0.005, 0.01, 0.05, 0.10)`.
+
+1. Plot train vs. test AUC across all `cp` values. At what `cp` value
+   does test AUC peak? What happens to train AUC at that same value?
+2. At the optimal `cp`, how many leaf nodes does the tree have?
+   Use `extract_fit_engine() |> pluck("frame") |> filter(var == "<leaf>") |> nrow()`
+3. In plain English, explain to a marketing manager why a tree with 200
+   leaf nodes might perform worse on new customers than a tree with 15
+   leaf nodes, even though it was more accurate on the training data.
+
+```{r ex6-1, eval=FALSE}
+# Your code here
+
+```
+
+## ✏️ Exercise 6.2 — Random Forest OOB vs. CV
+
+Fit a random forest with `trees = 500` and the best `mtry` and `min_n`
+from Section 5.2 (or tune them again on a small grid). Then:
+
+1. Extract the OOB accuracy from `extract_fit_engine()$prediction.error`
+2. Compare it to the CV accuracy from `tune_grid()` or `fit_resamples()`
+3. Are they close? Given what you know about how OOB error is computed,
+   should you expect OOB to be slightly higher or slightly lower than
+   CV error — and why?
+
+```{r ex6-2, eval=FALSE}
+# Your code here
+
+```
+
+## ✏️ Exercise 6.3 — Variable Importance: Impurity vs. Permutation
+
+Fit two random forests — one with `importance = "impurity"` and one with
+`importance = "permutation"` — using the same `mtry` and `min_n`.
+
+1. Plot variable importance from both forests side by side using `vip()`
+2. Do the two methods agree on the top 5 most important variables?
+   Identify any predictors that rank highly in one method but not the other.
+3. `discount_rate_seen` is a continuous variable with only 6 unique values.
+   In which importance method is it likely to be artificially inflated —
+   impurity or permutation — and why?
+
+```{r ex6-3, eval=FALSE}
+# Your code here
+
+```
+
+## ✏️ Exercise 6.4 — Boosting `learn_rate` Sensitivity
+
+Fit five XGBoost models with `learn_rate` values of
+`c(0.001, 0.01, 0.05, 0.10, 0.30)`, keeping `trees = 300`,
+`tree_depth = 3`, and `min_n = 10` fixed.
+
+1. For each model, record both train AUC (resubstitution) and test AUC.
+   Plot both against `learn_rate` (log scale on x-axis).
+2. At what `learn_rate` is the train-test gap smallest?
+3. A colleague argues: "Just use `learn_rate = 0.30` — it trains faster
+   and gets high accuracy." Based on your results, what is wrong with
+   this argument?
+
+```{r ex6-4, eval=FALSE}
+# Your code here
+
+```
+
+## ✏️ Exercise 6.5 — Final Model Comparison
+
+Using 10-fold cross-validation (the `camp_folds` object), compare all
+four models (Lasso LR, Decision Tree, Random Forest, XGBoost) on CV
+`roc_auc`. Use `fit_resamples()` for Lasso LR and Decision Tree;
+use the `tune_grid()` best results for Random Forest and XGBoost.
+
+1. Which model achieves the highest CV `roc_auc`? Is the difference
+   from the second-best model larger than one standard error?
+2. Given the nonlinear interactions built into the data-generating
+   process (e.g., `discount_bronze_boost`, `high_engagement_boost`),
+   why would you expect tree-based methods to outperform Lasso LR?
+3. If the Lasso LR had actually matched the random forest's CV AUC,
+   what would that tell you about the relationships in this dataset —
+   and which model would you recommend for deployment?
+
+```{r ex6-5, eval=FALSE}
+# Your code here
+
+```
+
+---
+
+```{r session-info}
+sessionInfo()
+```
