@@ -70,8 +70,8 @@ The engines for decision trees (`rpart`), random forests (`ranger`), and boosted
 
 We use a synthetic digital marketing campaign dataset with 4,000 customers. Two outcome variables serve as prediction targets throughout this module:
 
--   **`purchased`** (yes/no) — whether the customer converted during the campaign period → **classification**
--   **`avg_order_amt`** (\$) — the customer's average order value → **regression**
+- **`purchased`** (yes/no) — whether the customer converted during the campaign period → **classification**
+- **`avg_order_amt`** (\$) — the customer's average order value → **regression**
 
 ```{r create-data}
 set.seed(6540)
@@ -285,7 +285,7 @@ In the campaign data :
 
 ```{r}
 #| eval: false
-purchased = {
+purchased <- {
   loyalty_effect <- ...
   channel_effect <- ...
   device_effect <- ...
@@ -333,15 +333,15 @@ Each customer receives an adjustment based on loyalty tier:
 | Gold         | 0.90             |
 | Platinum     | 1.25             |
 
--   Bronze is the reference group. Higher loyalty tiers receive increasingly positive adjustments, making purchase more likely.
+- Bronze is the reference group. Higher loyalty tiers receive increasingly positive adjustments, making purchase more likely.
 
--   These numbers are measured on the **log-odds scale**, not directly as percentage-point increases.
+- These numbers are measured on the **log-odds scale**, not directly as percentage-point increases.
 
--   For example, Platinum’s coefficient of `1.25` multiplies the odds of purchase by:
+- For example, Platinum’s coefficient of `1.25` multiplies the odds of purchase by:
 
-    $e^{1.25} \approx 3.49$
+  $e^{1.25} \approx 3.49$
 
--   Holding everything else constant, a Platinum customer has about 3.5 times the purchase odds of an otherwise similar Bronze customer.
+- Holding everything else constant, a Platinum customer has about 3.5 times the purchase odds of an otherwise similar Bronze customer.
 
 ### `logit_purchase`
 
@@ -369,16 +369,16 @@ Each customer receives an adjustment based on loyalty tier:
       )
 ```
 
--   **Intercept** = Baseline probability by converting the logit score to purchase probability as:
+- **Intercept** = Baseline probability by converting the logit score to purchase probability as:
 
 $$P(\text{purchased} = \text{yes}) = \frac{1}{1 + e^{-(-5)}} 
                    = \frac{1}{1 + e^{5}} \approx 0.0067 \approx 0.67\%$$
 
--   The dataset may end up with a purchase rate around **24%** after the engagement, loyalty, frequency, channel, interaction, and random effects are added.
+- The dataset may end up with a purchase rate around **24%** after the engagement, loyalty, frequency, channel, interaction, and random effects are added.
 
--   $log1p(x) = log(1 + x)$
+- $log1p(x) = log(1 + x)$
 
--   **`plogis()`** is used to convert the logit score to a probability between 0 and 1.
+- **`plogis()`** is used to convert the logit score to a probability between 0 and 1.
 
 \$\$ P_i = \frac{1}{1 + e^{-\eta_i}}
 
@@ -399,15 +399,15 @@ For example:
 
 A higher logit means a higher probability, but the relationship is nonlinear.
 
--   `rbinom():`**Binominal Distribution**
+- `rbinom():`**Binominal Distribution**
 
 The general binomial model is:
 
 $$X ∼ Binomial⁡(m,p)$$ where:
 
--   X is the number of successes
--   m is the number of opportunities or trials
--   p is the probability of success on each trial
+- X is the number of successes
+- m is the number of opportunities or trials
+- p is the probability of success on each trial
 
 **Example:**
 
@@ -434,31 +434,31 @@ For each customer, `rbinom()` returns an integer from 0 through 5:
 ::: {.callout-note title="What drives purchase probability"}
 **Behavioral engagement (strongest signals)**
 
--   `cart_adds_30d` — customers who add items to their cart are most likely to convert; this is the single strongest predictor
--   `email_clicks_30d` and `site_visits_30d` — active engagement in the 30 days before the campaign predicts conversion
+- `cart_adds_30d` — customers who add items to their cart are most likely to convert; this is the single strongest predictor
+- `email_clicks_30d` and `site_visits_30d` — active engagement in the 30 days before the campaign predicts conversion
 
 **RFM signals**
 
--   `freq_12mo` — frequent past buyers are more likely to convert again
--   `recency_days` — customers who purchased more recently are more responsive
+- `freq_12mo` — frequent past buyers are more likely to convert again
+- `recency_days` — customers who purchased more recently are more responsive
 
 **Customer value signals**
 
--   `loyalty_tier` — Platinum \> Gold \> Silver \> Bronze conversion rates
--   `income` — modest positive effect
+- `loyalty_tier` — Platinum \> Gold \> Silver \> Bronze conversion rates
+- `income` — modest positive effect
 
 **Campaign exposure signals**
 
--   `channel` — email and direct channels convert best; display converts worst
--   `discount_rate_seen` — higher discounts boost conversion, especially for Bronze tier customers (nonlinear interaction)
--   `device` — desktop users convert at slightly higher rates than mobile
+- `channel` — email and direct channels convert best; display converts worst
+- `discount_rate_seen` — higher discounts boost conversion, especially for Bronze tier customers (nonlinear interaction)
+- `device` — desktop users convert at slightly higher rates than mobile
 
 **Nonlinear interactions (trees find these; linear models miss them)**
 
--   High discount × Bronze tier → extra conversion boost (price-sensitive customers)
--   High site visits AND email clicks → disproportionate engagement effect
--   Recently active AND frequent buyers → amplified recency × frequency boost
--   Email channel AND multiple email clicks → channel × engagement amplification
+- High discount × Bronze tier → extra conversion boost (price-sensitive customers)
+- High site visits AND email clicks → disproportionate engagement effect
+- Recently active AND frequent buyers → amplified recency × frequency boost
+- Email channel AND multiple email clicks → channel × engagement amplification
 :::
 
 ```{r response-rate}
@@ -505,15 +505,15 @@ p1 + p2
 
 **Loyalty tier** (clear gradient): Platinum members shop across more categories and are less price-constrained than Bronze members.
 
--   Bronze ≈ \$96 \| Silver ≈ \$104 \| Gold ≈ \$119 \| Platinum ≈ \$144
+- Bronze ≈ \$96 \| Silver ≈ \$104 \| Gold ≈ \$119 \| Platinum ≈ \$144
 
 **Channel** (directional): email and direct traffic drives deliberate, larger purchases; social and display drive impulse buys with smaller baskets.
 
--   Email ≈ \$119 \| Direct ≈ \$111 \| Social ≈ \$90 \| Display ≈ \$83
+- Email ≈ \$119 \| Direct ≈ \$111 \| Social ≈ \$90 \| Display ≈ \$83
 
 **Device** (meaningful): desktop users complete larger, more intentional purchases; mobile skews toward smaller, faster transactions.
 
--   Desktop ≈ \$125 \| Tablet ≈ \$105 \| Mobile ≈ \$94
+- Desktop ≈ \$125 \| Tablet ≈ \$105 \| Mobile ≈ \$94
 
 **Cart adds** (strongest behavioral signal, r ≈ 0.15): customers who added more items to their cart predictably complete larger orders.
 
@@ -678,14 +678,14 @@ A decision tree is a non-parametric model that recursively partitions the predic
 
 ## Key Terminology
 
--   **Root Node:** The topmost node in the tree representing the entire dataset before any splits occur.
--   **Internal (Decision) Node:** A node that splits into two child nodes based on a specific threshold of a single predictor variable.
--   **Child Node / Parent Node:** When a node splits, the original node is the *parent*, and the resulting sub-nodes are the *children*.
--   **Terminal Node (Leaf):** A final node at the bottom of the tree with no further splits. All observations falling into a leaf receive the same prediction:
-    -   **Classification:** The majority class (or class proportions) in that leaf.
-    -   **Regression:** The mean target value ($\bar{y}$) of training points in that leaf.
--   **Splitting Rule:** The specific criterion (e.g., Gini impurity or RSS) used to determine the best variable and threshold for dividing data at a node.
--   **Pruning:** The process of trimming back fully-grown branches to reduce model complexity and prevent overfitting.
+- **Root Node:** The topmost node in the tree representing the entire dataset before any splits occur.
+- **Internal (Decision) Node:** A node that splits into two child nodes based on a specific threshold of a single predictor variable.
+- **Child Node / Parent Node:** When a node splits, the original node is the *parent*, and the resulting sub-nodes are the *children*.
+- **Terminal Node (Leaf):** A final node at the bottom of the tree with no further splits. All observations falling into a leaf receive the same prediction:
+  - **Classification:** The majority class (or class proportions) in that leaf.
+  - **Regression:** The mean target value ($\bar{y}$) of training points in that leaf.
+- **Splitting Rule:** The specific criterion (e.g., Gini impurity or RSS) used to determine the best variable and threshold for dividing data at a node.
+- **Pruning:** The process of trimming back fully-grown branches to reduce model complexity and prevent overfitting.
 
 ## How Decision Trees Work
 
@@ -700,9 +700,9 @@ $$G = 1 - \sum_{k=1}^{K} \hat{p}_{mk}^2$$
 Where $\hat{p}_{mk}$ is the proportion of training observations in node $m$ belonging to class $k$.
 
 ::: {.callout-note title="Interpreting Gini Impurity"}
--   $G = 0$ (Completely Pure): Every customer in the node belongs to the exact same class.
--   $G \approx 0.5$ (Maximum Impurity for 2 Classes): Class proportions are split evenly ($50/50$).
--   The algorithm chooses the split that yields the largest **reduction in weighted Gini impurity** when comparing the parent node to its two child nodes.
+- $G = 0$ (Completely Pure): Every customer in the node belongs to the exact same class.
+- $G \approx 0.5$ (Maximum Impurity for 2 Classes): Class proportions are split evenly ($50/50$).
+- The algorithm chooses the split that yields the largest **reduction in weighted Gini impurity** when comparing the parent node to its two child nodes.
 :::
 
 ### 2. Regression Trees (Residual Sum of Squares)
@@ -716,9 +716,9 @@ Where $\bar{y}_{R_m}$ is the average response value of training points in region
 ## Controlling Tree Complexity (Hyperparameters)
 
 ::: {.callout-warning title="Why a single deep tree overfits"}
--   A fully grown tree will keep splitting until every leaf contains a single training observation — achieving 100% training accuracy but completely memorizing noise.
--   This is the same overfitting problem we saw with KNN at k=1 in Module 5.
--   The solution is **pruning**: limiting tree complexity via the `cost_complexity` (cp) hyperparameter, which adds a penalty for each additional leaf node.
+- A fully grown tree will keep splitting until every leaf contains a single training observation — achieving 100% training accuracy but completely memorizing noise.
+- This is the same overfitting problem we saw with KNN at k=1 in Module 5.
+- The solution is **pruning**: limiting tree complexity via the `cost_complexity` (cp) hyperparameter, which adds a penalty for each additional leaf node.
 :::
 
 Unconstrained decision trees will continue splitting until every leaf is completely pure, leading to severe **overfitting** (high variance). In `tidymodels` (via the `rpart` engine), three key hyperparameters control tree growth:
@@ -729,19 +729,19 @@ Unconstrained decision trees will continue splitting until every leaf is complet
 
 3.  **Cost-Complexity Parameter (`cost_complexity` /** $\alpha$): A penalty factor that penalizes larger trees. The algorithm minimizes: $$\text{Cost (or Tree Score)} = \text{Error} + \alpha \times (\text{Number of Leaves})$$
 
-    -   $\text{Cost}$ is Tree score.
-    -   $\text{Error}$ is SSR in Regression trees
-    -   The more the leaves, the greater the penalty
-    -   $\alpha$ is a tuning parameter, also called Cp.
-        -   $\alpha = 0$: We will get unpruned, full-size tree; complex tree.
-        -   Higher $\alpha$: Smaller, simpler tree with fewer leaves.
+    - $\text{Cost}$ is Tree score.
+    - $\text{Error}$ is SSR in Regression trees
+    - The more the leaves, the greater the penalty
+    - $\alpha$ is a tuning parameter, also called Cp.
+      - $\alpha = 0$: We will get unpruned, full-size tree; complex tree.
+      - Higher $\alpha$: Smaller, simpler tree with fewer leaves.
 
 ::: {.callout-tip title="Feature Scaling & Categorical Variables"}
 Decision trees evaluate variables **one at a time** (monotonic splits), which gives them two major advantages:
 
--   **No Scaling Required:** Decision trees are completely invariant to monotonic transformations. Normalizing or standardizing features (e.g., `step_normalize()`) does **not** change tree performance.
+- **No Scaling Required:** Decision trees are completely invariant to monotonic transformations. Normalizing or standardizing features (e.g., `step_normalize()`) does **not** change tree performance.
 
--   **Missing Values & Outliers:** Trees naturally accommodate non-linear relationships and are robust to severe feature outliers.
+- **Missing Values & Outliers:** Trees naturally accommodate non-linear relationships and are robust to severe feature outliers.
 :::
 
 ## Fitting a Classification Tree
@@ -780,9 +780,9 @@ tree_fit |>
 ::: {.callout-note title="How to read the tree"}
 Each node shows three numbers: the **predicted class** (yes/no), the **probability of "yes"**, and the **percentage of training observations** that reach that node.
 
--   **Root node** (top): the starting point — all training data, predicting the majority class at the overall response rate
--   **Internal nodes**: each shows the split condition (e.g., `cart_adds_30d < 2`); left branch = TRUE, right branch = FALSE
--   **Leaf nodes** (bottom): terminal predictions — the class and probability assigned to any new customer who follows that path through the tree
+- **Root node** (top): the starting point — all training data, predicting the majority class at the overall response rate
+- **Internal nodes**: each shows the split condition (e.g., `cart_adds_30d < 2`); left branch = TRUE, right branch = FALSE
+- **Leaf nodes** (bottom): terminal predictions — the class and probability assigned to any new customer who follows that path through the tree
 
 The first few splits reveal the most important predictors — the algorithm chose them because they produce the largest Gini reduction.
 :::
@@ -884,19 +884,19 @@ node), split, n, loss, yval, (yprob)
 1) root 3199 764 no (0.23882463 0.76117537)
 ```
 
--   **`1) root`**: This is **Node 1**, the top of the tree representing the entire dataset before any splits occur.
+- **`1) root`**: This is **Node 1**, the top of the tree representing the entire dataset before any splits occur.
 
--   **`3199` (**$n$): There are **3,199 total observations** in this training set.
+- **`3199` (**$n$): There are **3,199 total observations** in this training set.
 
--   **`764` (loss)**: If we predict the overall majority class for everyone at this step, we make **764 errors** (misclassifications).
+- **`764` (loss)**: If we predict the overall majority class for everyone at this step, we make **764 errors** (misclassifications).
 
--   **`no` (`yval`)**: The majority prediction at this node is `"no"`.
+- **`no` (`yval`)**: The majority prediction at this node is `"no"`.
 
--   **`(0.23882463 0.76117537)` (`yprob`)**: The proportion of classes in this node:
+- **`(0.23882463 0.76117537)` (`yprob`)**: The proportion of classes in this node:
 
-    -   Class 1 (e.g., `"yes"`): **23.88%**
+  - Class 1 (e.g., `"yes"`): **23.88%**
 
-    -   Class 2 (e.g., `"no"`): **76.12%** ($3,199 - 764 = 2,435$ actual `"no"` cases; $764 / 3,199 \approx 0.2388$).
+  - Class 2 (e.g., `"no"`): **76.12%** ($3,199 - 764 = 2,435$ actual `"no"` cases; $764 / 3,199 \approx 0.2388$).
 
 ### Node 2: The First Branch (Child Node)
 
@@ -904,21 +904,21 @@ node), split, n, loss, yval, (yprob)
 2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)
 ```
 
--   **`2)`**: This is **Node 2**, the left child node created by answering "Yes" to the split condition.
+- **`2)`**: This is **Node 2**, the left child node created by answering "Yes" to the split condition.
 
--   **`cart_adds_30d>=1.5`**: The decision rule that routed data into this node. (Customers who had **2 or more cart adds** in the last 30 days).
+- **`cart_adds_30d>=1.5`**: The decision rule that routed data into this node. (Customers who had **2 or more cart adds** in the last 30 days).
 
--   **`789` (**$n$): Out of 3,199 customers, **789 met this condition**.
+- **`789` (**$n$): Out of 3,199 customers, **789 met this condition**.
 
--   **`355` (loss)**: Predicting `"no"` for everyone in this group leads to **355 misclassifications**.
+- **`355` (loss)**: Predicting `"no"` for everyone in this group leads to **355 misclassifications**.
 
--   **`no` (`yval`)**: `"no"` remains the predicted majority class label for this node.
+- **`no` (`yval`)**: `"no"` remains the predicted majority class label for this node.
 
--   **`(0.44993663 0.55006337)` (`yprob`)**: Notice how the distribution shifted significantly compared to the root node:
+- **`(0.44993663 0.55006337)` (`yprob`)**: Notice how the distribution shifted significantly compared to the root node:
 
-    -   Class 1 (`"yes"`): Increased from **23.88%** $\rightarrow$ 44.99%
+  - Class 1 (`"yes"`): Increased from **23.88%** $\rightarrow$ 44.99%
 
-    -   Class 2 (`"no"`): Decreased from **76.12%** $\rightarrow$ 55.01%
+  - Class 2 (`"no"`): Decreased from **76.12%** $\rightarrow$ 55.01%
 
 ### Executive Interpretation
 
@@ -927,9 +927,9 @@ node), split, n, loss, yval, (yprob)
 ::: {.callout-tip title="How to Identify Sister Nodes"}
 In `rpart` tree printouts, child nodes follow a binary numbering convention:
 
--   Node $N$'s left child is $2N$ (e.g., Node 1 $\rightarrow$ **Node 2**).
+- Node $N$'s left child is $2N$ (e.g., Node 1 $\rightarrow$ **Node 2**).
 
--   Node $N$'s right child is $2N + 1$ (e.g., Node 1 $\rightarrow$ **Node 3** for `cart_adds_30d < 1.5`).
+- Node $N$'s right child is $2N + 1$ (e.g., Node 1 $\rightarrow$ **Node 3** for `cart_adds_30d < 1.5`).
 :::
 
 ## Reading Business Rules from the Tree
@@ -1069,17 +1069,17 @@ $$\text{Cost Complexity} = \sum_{m=1}^{|T|} \text{RSS}_m + \alpha \cdot |T|$$
 
 Where:
 
--   $\text{RSS}_m$: The Residual Sum of Squares in leaf $m$.
--   $|T|$: The total number of terminal leaf nodes in subtree $T$ (representing model complexity).
--   $\alpha$ (or $C_p$): The **complexity parameter** that penalizes the tree for having too many leaves.
+- $\text{RSS}_m$: The Residual Sum of Squares in leaf $m$.
+- $|T|$: The total number of terminal leaf nodes in subtree $T$ (representing model complexity).
+- $\alpha$ (or $C_p$): The **complexity parameter** that penalizes the tree for having too many leaves.
 
 ------------------------------------------------------------------------
 
 #### How $\alpha$ ($C_p$) Controls Tree Size
 
--   **When** $\alpha = 0$: There is no penalty for complexity. The algorithm selects the fully grown, unpruned tree ($T_0$).
--   **As** $\alpha$ increases: Small branches that yield only minor reductions in RSS are penalized and "collapsed" back into parent nodes.
--   **When** $\alpha \to \infty$: The penalty is so severe that the tree is pruned all the way down to a **single root node** (predicting the overall average $\bar{y}$ for everything).
+- **When** $\alpha = 0$: There is no penalty for complexity. The algorithm selects the fully grown, unpruned tree ($T_0$).
+- **As** $\alpha$ increases: Small branches that yield only minor reductions in RSS are penalized and "collapsed" back into parent nodes.
+- **When** $\alpha \to \infty$: The penalty is so severe that the tree is pruned all the way down to a **single root node** (predicting the overall average $\bar{y}$ for everything).
 
 ::: {.callout-note title="Mathematical Intuition"}
 As $\alpha$ increases from 0, subtrees are pruned in a deterministic nested sequence:
@@ -1100,8 +1100,8 @@ Full Dataset ──► \[Grow Large Tree T₀\] ──► \[Generate Sequence of
 1.  **Cross-Validation Split:** Divide the training data into $K$ folds (e.g., $K = 10$).
 2.  **Evaluate Subtrees:** For each candidate value of $\alpha$, fit the pruned tree on $K-1$ folds and compute the Cross-Validated Root Mean Squared Error ($\text{RMSE}_{\text{CV}}$) on the validation fold.
 3.  **Pick** $\alpha$: Choose either:
-    -   **`select_best("rmse")`:** The $\alpha$ that achieves the absolute minimum cross-validated error.
-    -   **`select_by_one_std_err()` (1-SE Rule):** The simplest tree (highest $\alpha$) whose error is within one standard error of the minimum error. This favors parsimonious, highly interpretable models.
+    - **`select_best("rmse")`:** The $\alpha$ that achieves the absolute minimum cross-validated error.
+    - **`select_by_one_std_err()` (1-SE Rule):** The simplest tree (highest $\alpha$) whose error is within one standard error of the minimum error. This favors parsimonious, highly interpretable models.
 
 ------------------------------------------------------------------------
 
@@ -1214,16 +1214,19 @@ We select the best `cost_complexity` value using the **1-Standard Error rule** (
 
 ```{r}
 # 1. Select Best Cp using the 1-SE Rule
-best_cp <- select_by_one_std_err(
+
+best_cp_1se <- select_by_one_std_err(
   tune_results, 
   metric = "rmse", 
-  desc(cost_complexity)
+  desc(cost_complexity) # prefer larger cp (simpler tree)
 )
 
-cat("Chosen Cost-Complexity (Cp):", best_cp$cost_complexity, "\n")
+best_cp <- select_best(tune_results, metric = "rmse")
+
+cat("Chosen Cost-Complexity (Cp):", best_cp_1se$cost_complexity, "\n")
 
 # 2. Finalize Workflow with Tuned Cp
-final_tree_wf <- finalize_workflow(tune_tree_wf, best_cp)
+final_tree_wf <- finalize_workflow(tune_tree_wf, best_cp_1se)
 
 # 3. Fit Final Pruned Model on Full Training Data
 final_tree_fit <- fit(final_tree_wf, data = camp_train)
@@ -1292,7 +1295,7 @@ final_tree_fit |>
 
 # Random Forests
 
-## From One Tree to Many — Bagging
+## Conceptual Overview
 
 A single decision tree is **high variance** — small changes in the training data can produce very different trees. The solution is **bagging (Bootstrap AGGregating)**:
 
@@ -1310,6 +1313,101 @@ If all predictors are strong, every bagged tree will tend to use the same top pr
 Typical default: $m = \sqrt{p}$ for classification, $m = p/3$ for regression.
 :::
 
+## 1. From One Tree to Many: Bagging (Bootstrap Aggregating)
+
+A single decision tree is notorious for having **high variance**: small perturbations in the training data can alter the root split and result in a completely different tree structure.
+
+To overcome this instability, we turn to an ensemble method called **Bagging (Bootstrap AGGregating)**:
+
+1.  **Bootstrap Sampling:** Draw $B$ independent bootstrap samples from the training dataset (sampling $N$ observations *with replacement*).
+
+2.  **Parallel Fitting:** Fit an unpruned, deep decision tree to each bootstrap sample.
+
+3.  **Aggregating Predictions:** Combine the predictions across all $B$ trees:
+
+    - **Regression:** Compute the average prediction: $\hat{f}_{\text{bag}}(x) = \frac{1}{B} \sum_{b=1}^B \hat{f}^b(x)$
+
+      - $x$ = Input feature vector: e.g., a set of customer characteristics
+      - $\hat{f}^b(x)$ = Prediction of Tree *b*
+      - $\hat{f}_{\text{bag}}(x)$ = Final Bagged Estimate, which is the aggregated, overall ensemble prediction for observation $x$.
+
+    - **Classification:** Take the majority vote (or average predicted class probabilities).
+
+::: {.callout-note title="Regression vs. Classification"}
+- For Regression (what this formula shows): The final prediction $\hat{f}_{\text{bag}}(x)$ is the continuous average of all $B$ numeric outputs.
+
+- For Classification: Rather than averaging continuous values, each tree votes for a discrete class label, and $\hat{f}_{\text{bag}}(x)$ represents the majority vote (or the average predicted probability across all $B$ trees).
+:::
+
+### Why Bagging Works: The Mathematics of Variance Reduction
+
+If we have $B$ independent and identically distributed (i.i.d.) random variables each with variance $\sigma^2$, the variance of their average is:
+
+$$\text{Var}\left(\frac{1}{B} \sum_{b=1}^B X_b\right) = \frac{\sigma^2}{B}$$
+
+- $B$: The total number of trees in your ensemble (e.g., $B = 500$).
+
+- $b$: The index for a specific tree, where $b = 1, 2, \dots, B$.
+
+- $X_b$: The output/prediction of tree $b$ for a given observation $x$ (often written as $\hat{f}^b(x)$ in textbook notation).
+
+- $\frac{1}{B} \sum_{b=1}^B X_b$: The average prediction across all $B$ trees in the ensemble (the Bagged / Random Forest estimate).
+
+- $\sigma^2$: The variance of a single individual decision tree ($\text{Var}(X_b) = \sigma^2$).
+
+As $B$ grows large, variance approaches zero. However, because bagged trees are trained on overlapping bootstrap samples from the same dataset, they are **correlated** (with pair-wise correlation $\rho > 0$). The true variance of an ensemble average is:
+
+$$\text{Var}(\text{Ensemble}) = \rho \sigma^2 + \frac{1 - \rho}{B} \sigma^2$$
+
+As $B \to \infty$, the second term drops to zero, but the first term ($\rho \sigma^2$) remains. **If trees are highly correlated (**$\rho$ is large), bagging offers limited variance reduction.
+
+------------------------------------------------------------------------
+
+## 2. De-Correlating Trees: The Random Forest Breakthrough
+
+If a dataset has one or two dominant predictors (e.g., `income` or `recency_days`), **every single bagged tree will select that dominant predictor for its root split**. Consequently, all trees in the bagged ensemble look almost identical ($\rho \approx 1$).
+
+**Random Forests** fix this bottleneck by adding **feature randomness (sub-space sampling)** at every split:
+
+::: {.callout-note title="The Key Difference: Split-Level Feature Subsampling"}
+When building each tree, at **every individual split**, the algorithm randomly draws a candidate subset of $m$ features from the total $p$ available features ($m < p$). The tree is forced to choose the best split **only among those** $m$ candidates.
+
+- **Classification Default:** $m = \sqrt{p}$
+- **Regression Default:** $m = p/3$
+
+By forcing trees to ignore dominant predictors at many nodes, feature randomness **decorrelates the trees** (lowers $\rho$), unlocking massive variance reduction when averaged.
+:::
+
+------------------------------------------------------------------------
+
+## 3. Out-of-Bag (OOB) Error: "Free" Validation
+
+Because each bootstrap sample selects approximately $63.2\%$ of unique observations, the remaining $\sim 36.8\%$ of data points are left out for that specific tree. These are called **Out-of-Bag (OOB)** observations.
+
+Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree b └──► \[ Out-of-Bag (OOB) (\~36.8%) \] ──► Validate Tree b
+
+- For each observation $i$, we can predict its value using **only the trees where observation** $i$ was OOB.
+- Averaging these predictions yields the **OOB Error Rate**, which serves as an unbiased estimate of test error **without needing** $K$-fold cross-validation or a separate validation split.
+
+------------------------------------------------------------------------
+
+## 4. Key Hyperparameters in `tidymodels` (`rand_forest`)
+
+| Math Symbol | Concept | `tidymodels` Argument | Default (`ranger` engine) | Practical Guidance |
+|---------------|---------------|---------------|---------------|---------------|
+| $m$ | Candidate features per split | `mtry` | $\sqrt{p}$ (Class) / $p/3$ (Reg) | Primary tuning parameter. Smaller $m \to$ less tree correlation. |
+| $B$ | Number of trees | `trees` | $500$ | More is generally better (does not overfit); set high enough for error to stabilize (e.g., $500–1000$). |
+| $n_{\text{min}}$ | Min node size for split | `min_n` | $1$ (Class) / $5$ (Reg) | Controls tree depth/growth stopping. Lower values $\to$ deeper trees. |
+
+------------------------------------------------------------------------
+
+## 5. Feature Importance: Peeking Inside the "Black Box"
+
+While individual decision trees produce simple flowchart diagrams, Random Forests aggregate hundreds of trees, sacrificing direct diagram visualizability. To restore interpretability, we measure **Variable Importance**:
+
+1.  **Mean Decrease in Impurity (MDI / Gini Importance):** Sums the total reduction in Gini impurity (or RSS) brought about by splits on feature $X_j$, averaged across all trees.
+2.  **Permutation Importance (OOB Drop):** Randomly shuffles (scrambles) feature $X_j$ in the OOB data and measures how much predictive accuracy degrades. Larger drops in accuracy indicate higher feature importance.
+
 ## Fitting a Random Forest
 
 ::: callout-tip
@@ -1317,13 +1415,12 @@ This code chunk takes a long time to run due to computational complexity. Thus, 
 :::
 
 ```{r rf-fit}
-# Parallel processing
+# 1. Parallel processing
 library(doParallel)
 cl <- makePSOCKcluster(parallel::detectCores() - 1)
 registerDoParallel(cl)
 
-# Random Forest
-
+# 2. Random Forest Model Specification
 rf_spec <- rand_forest(
   trees = 500, # number of trees — more is generally better (diminishing returns)
   mtry = tune(), # number of predictors considered at each split
@@ -1332,11 +1429,12 @@ rf_spec <- rand_forest(
   set_engine("ranger", importance = "permutation") |> # enables variable importance
   set_mode("classification")
 
+# 3. Workflow Setup
 rf_wf <- workflow() |>
   add_recipe(class_rec) |>
   add_model(rf_spec)
 
-# Quick tuning — small grid for demonstration
+# 4. Turning Grid: small grid for demonstration
 set.seed(2025)
 rf_grid <- grid_regular(
   mtry(range = c(3, 10)),
@@ -1344,6 +1442,7 @@ rf_grid <- grid_regular(
   levels = 3
 )
 
+# 5. Tune Grid
 rf_tune_results <- tune_grid(
   rf_wf,
   resamples = camp_folds,
@@ -1351,9 +1450,15 @@ rf_tune_results <- tune_grid(
   metrics = metric_set(roc_auc, accuracy)
 )
 
+# 6. Safely Close Cluster
+stopImplicitCluster()
+stopCluster(cl)
+
+# 7 Plot Results
 autoplot(rf_tune_results) +
   labs(title = "Random Forest Tuning — AUC Across mtry and min_n") +
   theme_minimal(base_size = 11)
+
 ```
 
 ```{r rf-best}
@@ -1444,6 +1549,17 @@ The `ranger` engine supports two importance measures:
 **Permutation importance** (what we use here): for each variable, randomly shuffle its values across all test observations and measure how much prediction accuracy drops. A variable that is truly important will cause a large accuracy drop when shuffled; a noise variable will cause little change. This is more reliable but slower to compute.
 
 We use `importance = "permutation"` in the engine call for this reason — it gives a fairer comparison across predictors with different scales and cardinalities.
+:::
+
+## Model Comparison: Single Tree vs. Random Forest
+
+| Metric       | Single Decision Tree | Random Forest Ensemble | Improvement |
+|--------------|----------------------|------------------------|-------------|
+| **Accuracy** | 0.774                | **0.808**              | +4.4%       |
+| **ROC AUC**  | 0.761                | **0.805**              | +5.8%       |
+
+::: {.callout-tip title="Takeaway for Class"}
+By combining 500 decorrelated trees via **bagging** and **feature randomness (`mtry`)**, the Random Forest successfully reduced model variance, yielding a significantly higher ROC AUC on holdout test data compared to any individual decision tree.
 :::
 
 ------------------------------------------------------------------------
@@ -1706,10 +1822,6 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
   theme_minimal(base_size = 12)
 ```
 
-```{r stop-doParallel}
-stopCluster(cl)
-```
-
 ## Model Comparison Summary
 
 ```{r compare-table}
@@ -1725,8 +1837,8 @@ all_model_metrics |>
 ::: {.callout-note title="Why ensemble methods typically outperform single trees"}
 A single decision tree is a **high-variance** model — it can fit the training data well but is sensitive to which particular observations happened to be in the training set. Both random forests and boosting address this:
 
--   **Random forests** reduce variance by averaging many decorrelated trees
--   **XGBoost** reduces bias by sequentially correcting prediction errors
+- **Random forests** reduce variance by averaging many decorrelated trees
+- **XGBoost** reduces bias by sequentially correcting prediction errors
 
 The Lasso logistic regression (linear model) provides a useful baseline: if tree methods don't outperform it, the relationships in the data are likely approximately linear and the simpler model is preferable (parsimony).
 
