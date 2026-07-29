@@ -1282,7 +1282,7 @@ final_tree_fit |>
 ## Comparison: Classification Trees vs. Regression Trees
 
 |  |  |  |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | **Feature** | **Classification Trees** | **Regression Trees** |
 | **Target Variable (**$Y$) | Categorical (e.g., `Apparel`, `Electronics`) | Continuous (e.g., `Income`, `Orders`) |
 | **Prediction at Leaf** | Majority Class Label (or Class Probabilities) | Sample Mean ($\bar{y}$) of observations in leaf |
@@ -1420,7 +1420,7 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 ## 4. Key Hyperparameters in `tidymodels` (`rand_forest`)
 
 | Math Symbol | Concept | `tidymodels` Argument | Default (`ranger` engine) | Practical Guidance |
-|---------------|---------------|---------------|---------------|---------------|
+|----|----|----|----|----|
 | $m$ | Candidate features per split | `mtry` | $\sqrt{p}$ (Class) / $p/3$ (Reg) | Primary tuning parameter. Smaller $m \to$ less tree correlation. |
 | $B$ | Number of trees | `trees` | $500$ | More is generally better (does not overfit); set high enough for error to stabilize (e.g., $500–1000$). |
 | $n_{\text{min}}$ | Min node size for split | `min_n` | $1$ (Class) / $5$ (Reg) | Controls tree depth/growth stopping. Lower values $\to$ deeper trees. |
@@ -1582,22 +1582,22 @@ We use `importance = "permutation"` in the engine call for this reason — it gi
 ### Model Comparison: Single Tree vs. Random Forest on Prediction Performance
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Improvement |
-|------------------|------------------|--------------------|------------------|
+|----|----|----|----|
 | **Accuracy** | 0.774 | **0.808** | +4.4% |
 | **ROC AUC** | 0.761 | **0.805** | +5.8% |
 
-::: {.callout-tip title="Takeaway for Class"}
+::: {.callout-tip title="Why Random Forest is Superior?"}
 By combining 500 decorrelated trees via **bagging** and **feature randomness (`mtry`)**, the Random Forest successfully reduced model variance, yielding a significantly higher ROC AUC on holdout test data compared to any individual decision tree.
 :::
 
-### The Takeaway for Students
+### Cost of Random Forest
 
 - **Why use 10-Fold CV?** It fits into the standard `tidymodels` workflow (`tune_grid()`), making it easy to tune hyperparameters using the exact same code structure as Logistic Regression, Decision Trees, or XGBoost.
 
-- **Why mention OOB?** For massive datasets where running 10-Fold CV across a hyperparameter grid takes hours (or days), you can skip $K$-fold CV entirely. You can evaluate candidate models using their built-in **OOB Error**, which requires fitting each candidate forest **only once** instead of 10 times!
+- **Alternative?** For massive datasets where running 10-Fold CV across a hyperparameter grid takes hours (or days), you can skip $K$-fold CV entirely. You can evaluate candidate models using their built-in **OOB Error**, which requires fitting each candidate forest **only once** instead of 10 times!
 
 ::: {.callout-tip title="Summary Callout for Class"}
-In your code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
+In the previous code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
 ## Fitting Random Forest with OBB Tuning
@@ -1705,10 +1705,10 @@ rf_default_preds |>
 
 ```
 
-### Model Comparison: Single Tree vs. Random Forests on Prediction Performance
+### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
-|------------------|------------------|-------------------|------------------|
+|----|----|----|----|
 | **Accuracy** | 0.774 | **0.808** | 0.806 |
 | **ROC AUC** | 0.761 | **0.805** | 0.802 |
 
@@ -1719,7 +1719,7 @@ Compared with using time-consuming 10 Fold CV-tuned method, the default method r
 ### Summary Table for Random Forest Tuning Strategy
 
 |  |  |  |  |
-|------------------|------------------|------------------|------------------|
+|----|----|----|----|
 | **Tuning Strategy** | **How It Works** | **Computation Time** | **Ideal Use Case** |
 | **10-Fold CV Search** | Fits every candidate $10\times$ across 10 internal validation splits. | **Slowest** ($100\%$ CPU overhead) | Standard datasets; consistent with other `tidymodels` workflows. |
 | **OOB Validation Search** | Fits every candidate $1\times$ on full training data; uses built-in OOB error. | **Fast** (\~$90\%$ time reduction) | Large datasets; extensive hyperparameter grids. |
@@ -1792,6 +1792,94 @@ Short answer: Neither is strictly "better"—they trade off bias and variance di
 - **Sensitivity to Noise and Outliers:** Because AdaBoost exponentially increases the weight of misclassified points, an outlier or mislabeled data point will get huge weight. The algorithm can become obsessed with fitting noisy observations, leading to **severe overfitting**.
 
 - **Parallelization:** Random Forest trains all 500 trees simultaneously across CPU cores. AdaBoost must wait for Stump 1 to finish before Stump 2 can evaluate errors.
+
+## Gradient Boosting: Learning from Residuals
+
+While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
+
+------------------------------------------------------------------------
+
+### 1. The Core Intuition: Golfing Toward the Target
+
+Think of Gradient Boosting like a golfer trying to hit a ball into a hole:
+
+1.  **First Shot (**$\hat{f}_1$): You take a big drive toward the hole. You miss by 50 yards short and 10 yards left. This error is your **residual**.
+2.  **Second Shot (**$\hat{f}_2$): Instead of starting over at the tee, you walk up to your ball and swing **only to cover the remaining 50 yards short and 10 yards left**.
+3.  **Third Shot (**$\hat{f}_3$): Your second shot gets close, leaving you only 3 feet short. You tap the ball 3 feet forward.
+
+Your final position is the **sum of all shots**:
+
+$$\text{Final Prediction} = \text{Shot}_1 + \text{Shot}_2 + \text{Shot}_3 + \dots$$
+
+------------------------------------------------------------------------
+
+### 2. Step-by-Step Algorithm (Regression Example)
+
+To predict a continuous target variable $y$ using features $X$:
+
+#### Step 1: Initialize with a Baseline Constant
+
+Start with a single constant prediction $\hat{f}_0(x)$—typically the mean of $y$ for all observations:
+
+$$\hat{f}_0(x) = \bar{y}$$
+
+------------------------------------------------------------------------
+
+#### Step 2: Sequentially Fit Trees to Residuals
+
+For $m = 1$ to $M$ (where $M$ is the total number of trees):
+
+1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
+
+2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable.
+
+3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
+
+------------------------------------------------------------------------
+
+#### Step 3: Output the Final Ensemble Model
+
+After fitting $M$ trees, the final prediction is:
+
+$$\hat{f}(x) = \hat{f}_0(x) + \eta \sum_{m=1}^M h_m(x)$$
+
+------------------------------------------------------------------------
+
+### 3. Why the Name *Gradient* Boosting?
+
+When using squared error loss $L(y, \hat{y}) = \frac{1}{2}(y - \hat{y})^2$, the negative gradient of the loss function with respect to the prediction is:
+
+$$-\frac{\partial L}{\partial \hat{y}} = y - \hat{y} = \text{Residual}$$
+
+Fitting a tree to $y - \hat{y}$ is mathematically equivalent to taking a step in the direction of the **steepest descent (negative gradient)** to minimize overall loss.
+
+::: {.callout-note title="Teaching Moment: Loss Function Versatility"}
+Because it uses gradient descent, Gradient Boosting works on **any differentiable loss function**: \* **Regression:** Squared error loss ($L_2$) or Absolute error loss ($L_1$, robust to outliers). \* **Classification:** Log-loss / Binary Cross-Entropy.
+:::
+
+------------------------------------------------------------------------
+
+### 4. Key Hyperparameters in Gradient Boosting
+
+Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
+
+| Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
+|----|----|----|----|
+| $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
+| $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
+| $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
+
+------------------------------------------------------------------------
+
+### 5. Summary: Bagging vs. Boosting Comparison
+
+| Property | Random Forest | Gradient Boosting |
+|----|----|----|
+| **Tree Construction** | Parallel (Independent) | Sequential (Chained) |
+| **Individual Tree Size** | Deep, unpruned trees | Very shallow trees (stumps / small depth) |
+| **Primary Goal** | Reduces **Variance** | Reduces **Bias** |
+| **Risk of Overfitting** | Low (adding trees stabilizes error) | High (requires early stopping / tuning $M$) |
+| **Tuning Sensitivity** | Low (defaults work well) | High (requires tuning `trees`, `learn_rate`, `tree_depth`) |
 
 ## Fitting Boosted Trees (XGBoost)
 
@@ -2057,7 +2145,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 ## Three Methods at a Glance
 
 | Method | Key idea | Strengths | Weaknesses |
-|------------------|------------------|------------------|------------------|
+|----|----|----|----|
 | **Decision tree** | Recursive binary splits | Interpretable; visual; handles interactions | High variance; overfits easily without pruning |
 | **Random forest** | Bagging + feature randomness | Low variance; robust; built-in OOB validation | Less interpretable; slow with many trees |
 | **XGBoost** | Sequential error correction | Often best accuracy; flexible | Many hyperparameters; slowest to tune |
@@ -2065,7 +2153,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 ## When to Use Each
 
 | Situation | Recommended |
-|------------------------------------|------------------------------------|
+|----|----|
 | Need to explain the model to non-technical stakeholders | Decision tree (visualizable rules) |
 | Reliable performance with minimal tuning | Random forest |
 | Maximum predictive accuracy; time to tune carefully | XGBoost |
