@@ -41,6 +41,7 @@ By the end of this notebook you will be able to:
 # Setup
 
 ```{r setup}
+#install.packages("rpart.plot")
 library(tidymodels)
 library(tidyverse)
 library(rpart.plot) # visualize decision trees
@@ -653,13 +654,13 @@ reg_rec <- recipe(
 ```
 
 ::: {.callout-note title="Why log-transform the outcome but not the predictors?"}
-`avg_order_amt` is right-skewed — a few very large orders pull the distribution out. For regression trees, the split criterion is **RSS (Residual Sum of Squares)**: the algorithm finds the split that minimizes the total squared deviation from the group mean within each node.
+- `avg_order_amt` is right-skewed — a few very large orders pull the distribution out. For regression trees, the split criterion is **RSS (Residual Sum of Squares)**: the algorithm finds the split that minimizes the total squared deviation from the group mean within each node.
 
-Squared errors punish large outliers heavily — a single \$500 order can disproportionately influence which split is chosen. Log-transforming the outcome compresses the scale, reducing the leverage of outliers on split decisions and producing a more balanced tree.
+- Squared errors punish large outliers heavily — a single \$500 order can disproportionately influence which split is chosen. Log-transforming the outcome compresses the scale, reducing the leverage of outliers on split decisions and producing a more balanced tree.
 
-Note that predictions will be on the log scale — you need to `exp()` them to get back to dollar amounts.
+**Note** that predictions will be on the log scale — you need to **`exp()`** them to get back to dollar amounts.
 
-We do **not** log-transform the predictors because (as explained above) trees are rank-order invariant — monotone predictor transforms have no effect on splits.
+- We do **not** log-transform the predictors because (as explained above) trees are rank-order invariant — monotone predictor transforms have no effect on splits.
 :::
 
 ## Cross-Validation Folds
@@ -674,7 +675,7 @@ camp_folds
 
 # Decision Trees
 
-A decision tree is a non-parametric model that recursively partitions the predictor space into a set of rectangular, non-overlapping regions. For any new observation, the tree traces a path from top to bottom through a series of binary (yes/no) split questions (e.g., *"Is `cart_adds_30d`* $\ge 2$?") until it lands in a final region, where it assigns a prediction.
+A decision tree is a **non-parametric model** that recursively partitions the predictor space into a set of rectangular, non-overlapping regions. For any new observation, the tree traces a path from top to bottom through a series of binary (yes/no) split questions (e.g., *"Is `cart_adds_30d`* $\ge 2$?") until it lands in a final region, where it assigns a prediction.
 
 ## Key Terminology
 
@@ -1708,7 +1709,7 @@ rf_default_preds |>
 ### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
-|-----------------|-----------------|-------------------|--------------------|
+|------------------|------------------|------------------|-------------------|
 | **Accuracy** | 0.774 | **0.808** | 0.806 |
 | **ROC AUC** | 0.761 | **0.805** | 0.802 |
 
@@ -1870,7 +1871,7 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
-|----------------|----------------|----------------|--------------------------|
+|-----------------|-----------------|-----------------|-----------------------|
 | $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
 | $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
 | $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
@@ -1878,7 +1879,7 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 ### 5. Summary: Bagging vs. Boosting Comparison
 
 | Property | Random Forest | Gradient Boosting |
-|---------------------|-----------------------|-----------------------------|
+|---------------------|-----------------------|----------------------------|
 | **Tree Construction** | Parallel (Independent) | Sequential (Chained) |
 | **Individual Tree Size** | Deep, unpruned trees | Very shallow trees (stumps / small depth) |
 | **Primary Goal** | Reduces **Variance** | Reduces **Bias** |
@@ -2398,3 +2399,7 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 # Your code here
 
 ```
+
+# Appendix
+
+- [My published Notebook](https://jaejungca.github.io/trees-ensembles/m06_trees_ensembles.html#model-comparison-single-tree-vs.-random-forest)
