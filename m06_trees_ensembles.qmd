@@ -1,7 +1,7 @@
 ---
 title: "Module 6 — Trees and Ensembles"
 subtitle: "Applied Machine Learning for Marketing"
-author: "Jae Jung"
+author: "Jake Evans"
 date: today
 format:
   html:
@@ -1708,7 +1708,7 @@ rf_default_preds |>
 ### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
-|-----------------|-----------------|-------------------|--------------------|
+|------------------|------------------|------------------|-------------------|
 | **Accuracy** | 0.774 | **0.808** | 0.806 |
 | **ROC AUC** | 0.761 | **0.805** | 0.802 |
 
@@ -1870,7 +1870,7 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
-|----------------|----------------|----------------|--------------------------|
+|-----------------|-----------------|-----------------|---------------------|
 | $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
 | $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
 | $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
@@ -1878,7 +1878,7 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 ### 5. Summary: Bagging vs. Boosting Comparison
 
 | Property | Random Forest | Gradient Boosting |
-|---------------------|-----------------------|-----------------------------|
+|---------------------|-----------------------|----------------------------|
 | **Tree Construction** | Parallel (Independent) | Sequential (Chained) |
 | **Individual Tree Size** | Deep, unpruned trees | Very shallow trees (stumps / small depth) |
 | **Primary Goal** | Reduces **Variance** | Reduces **Bias** |
@@ -2398,3 +2398,5 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 # Your code here
 
 ```
+
+Appendix:
