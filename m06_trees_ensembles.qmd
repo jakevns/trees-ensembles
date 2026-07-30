@@ -1282,7 +1282,7 @@ final_tree_fit |>
 ## Comparison: Classification Trees vs. Regression Trees
 
 |  |  |  |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **Feature** | **Classification Trees** | **Regression Trees** |
 | **Target Variable (**$Y$) | Categorical (e.g., `Apparel`, `Electronics`) | Continuous (e.g., `Income`, `Orders`) |
 | **Prediction at Leaf** | Majority Class Label (or Class Probabilities) | Sample Mean ($\bar{y}$) of observations in leaf |
@@ -1420,7 +1420,7 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 ## 4. Key Hyperparameters in `tidymodels` (`rand_forest`)
 
 | Math Symbol | Concept | `tidymodels` Argument | Default (`ranger` engine) | Practical Guidance |
-|----|----|----|----|----|
+|---------------|---------------|---------------|---------------|---------------|
 | $m$ | Candidate features per split | `mtry` | $\sqrt{p}$ (Class) / $p/3$ (Reg) | Primary tuning parameter. Smaller $m \to$ less tree correlation. |
 | $B$ | Number of trees | `trees` | $500$ | More is generally better (does not overfit); set high enough for error to stabilize (e.g., $500–1000$). |
 | $n_{\text{min}}$ | Min node size for split | `min_n` | $1$ (Class) / $5$ (Reg) | Controls tree depth/growth stopping. Lower values $\to$ deeper trees. |
@@ -1582,7 +1582,7 @@ We use `importance = "permutation"` in the engine call for this reason — it gi
 ### Model Comparison: Single Tree vs. Random Forest on Prediction Performance
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Improvement |
-|----|----|----|----|
+|------------------|------------------|-------------------|------------------|
 | **Accuracy** | 0.774 | **0.808** | +4.4% |
 | **ROC AUC** | 0.761 | **0.805** | +5.8% |
 
@@ -1596,7 +1596,7 @@ By combining 500 decorrelated trees via **bagging** and **feature randomness (`m
 
 - **Alternative?** For massive datasets where running 10-Fold CV across a hyperparameter grid takes hours (or days), you can skip $K$-fold CV entirely. You can evaluate candidate models using their built-in **OOB Error**, which requires fitting each candidate forest **only once** instead of 10 times!
 
-::: {.callout-tip title="Summary Callout for Class"}
+::: {.callout-tip title="Summary"}
 In the previous code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
@@ -1676,7 +1676,7 @@ Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradie
 
 If dataset scale makes grid searching prohibitive, fitting a **single 1,000-tree forest with default settings** delivers strong results in a fraction of the time.
 
-```{r}
+```{r rf-default-hyper}
 
 # 1. Model Spec (OOB prediction mode)
 rf_default_spec <- rand_forest(
@@ -1708,7 +1708,7 @@ rf_default_preds |>
 ### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
-|----|----|----|----|
+|-----------------|-----------------|-------------------|--------------------|
 | **Accuracy** | 0.774 | **0.808** | 0.806 |
 | **ROC AUC** | 0.761 | **0.805** | 0.802 |
 
@@ -1719,7 +1719,7 @@ Compared with using time-consuming 10 Fold CV-tuned method, the default method r
 ### Summary Table for Random Forest Tuning Strategy
 
 |  |  |  |  |
-|----|----|----|----|
+|------------------|------------------|------------------|------------------|
 | **Tuning Strategy** | **How It Works** | **Computation Time** | **Ideal Use Case** |
 | **10-Fold CV Search** | Fits every candidate $10\times$ across 10 internal validation splits. | **Slowest** ($100\%$ CPU overhead) | Standard datasets; consistent with other `tidymodels` workflows. |
 | **OOB Validation Search** | Fits every candidate $1\times$ on full training data; uses built-in OOB error. | **Fast** (\~$90\%$ time reduction) | Large datasets; extensive hyperparameter grids. |
@@ -1751,7 +1751,7 @@ Each iteration corrects the mistakes of the previous ensemble — slowly buildin
 **`tree_depth`** — how deep each individual tree is. Boosting typically uses **shallow trees** (depth 1–6), unlike random forests which use full-depth trees. Shallow trees are weak learners — but boosting combines many of them into a strong ensemble. Deeper trees can model more complex interactions per step but increase overfitting risk.
 :::
 
-## AdaBoost
+## AdaBoost (Adaptive Boosting)
 
 ### What is AdaBoost?
 
@@ -1797,7 +1797,9 @@ Short answer: Neither is strictly "better"—they trade off bias and variance di
 
 While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
 
-------------------------------------------------------------------------
+- Gradient boosting for regression
+
+- Gradient boosting for classification
 
 ### 1. The Core Intuition: Golfing Toward the Target
 
@@ -1854,7 +1856,11 @@ $$-\frac{\partial L}{\partial \hat{y}} = y - \hat{y} = \text{Residual}$$
 Fitting a tree to $y - \hat{y}$ is mathematically equivalent to taking a step in the direction of the **steepest descent (negative gradient)** to minimize overall loss.
 
 ::: {.callout-note title="Teaching Moment: Loss Function Versatility"}
-Because it uses gradient descent, Gradient Boosting works on **any differentiable loss function**: \* **Regression:** Squared error loss ($L_2$) or Absolute error loss ($L_1$, robust to outliers). \* **Classification:** Log-loss / Binary Cross-Entropy.
+Because it uses gradient descent, Gradient Boosting works on **any differentiable loss function**:
+
+- **Regression:** Squared error loss ($L_2$) or Absolute error loss ($L_1$, robust to outliers).
+
+- **Classification:** Log-loss / Binary Cross-Entropy.
 :::
 
 ------------------------------------------------------------------------
@@ -1864,24 +1870,176 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
-|----|----|----|----|
+|----------------|----------------|----------------|--------------------------|
 | $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
 | $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
 | $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
 
-------------------------------------------------------------------------
-
 ### 5. Summary: Bagging vs. Boosting Comparison
 
 | Property | Random Forest | Gradient Boosting |
-|----|----|----|
+|---------------------|-----------------------|-----------------------------|
 | **Tree Construction** | Parallel (Independent) | Sequential (Chained) |
 | **Individual Tree Size** | Deep, unpruned trees | Very shallow trees (stumps / small depth) |
 | **Primary Goal** | Reduces **Variance** | Reduces **Bias** |
 | **Risk of Overfitting** | Low (adding trees stabilizes error) | High (requires early stopping / tuning $M$) |
 | **Tuning Sensitivity** | Low (defaults work well) | High (requires tuning `trees`, `learn_rate`, `tree_depth`) |
 
-## Fitting Boosted Trees (XGBoost)
+### 6. Gradient Boosting vs. Adaboost
+
+**Gradient Boosting is a generalization and upgrade of AdaBoost.** While AdaBoost was a brilliant proof-of-concept for sequential learning, Gradient Boosting replaced AdaBoost’s specific "reweighting" trick with a flexible mathematical framework based on gradient descent.
+
+```         
+AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
+```
+
+#### AdaBoost (Adaptive Boosting)
+
+- **The Mechanism:** Starts with equal weights for every row. After fitting a tree (usually a 1-split decision stump), it **increases the weights of misclassified rows** and decreases the weights of correct ones.
+
+- **The Next Tree:** The next stump is forced to pay more attention to the heavily weighted "hard" rows.
+
+- **Voting:** Final predictions are made via a **weighted vote**, where high-accuracy trees get more say than weaker trees.
+
+#### Gradient Boosting (GBM)
+
+- **The Mechanism:** Instead of changing row weights, the next tree is trained to directly predict the **residuals** (the leftover mathematical error $y - \hat{y}$) of all previous trees combined.
+
+- **The Next Tree:** Fits directly to those continuous residual errors.
+
+- **Voting:** Final predictions are made by **adding up the outputs** of all trees scaled by a learning rate ($\eta$).
+
+### Is Gradient Boosting "Better" Than AdaBoost
+
+#### A. Robustness to Noise and Outliers (The Major Flaw of AdaBoost)
+
+Because AdaBoost **exponentially increases** the weights of misclassified observations, an outlier or mislabeled data point will quickly dominate the weights. AdaBoost gets "obsessed" with fitting noise, leading to **severe overfitting**.
+
+Gradient Boosting, by contrast, uses differentiable loss functions (like Huber loss or absolute error) that can gracefully down-weight extreme outliers.
+
+#### B. Loss Function Flexibility
+
+- **AdaBoost** is strictly tied to **exponential loss** (for classification) or square error loss variants.
+
+- **Gradient Boosting** works with **any differentiable loss function**. You can use:
+
+  - **MSE (**$L_2$): For standard continuous regression.
+
+  - **MAE (**$L_1$): For median regression (robust to outliers).
+
+  - **Log-Loss / Cross-Entropy:** For binary and multi-class classification.
+
+  - **Poisson / Tweedie:** For count data or insurance claims.
+
+#### C. Capacity to Scale & Complex Patterns
+
+AdaBoost typically relies on **decision stumps** (trees with a depth of 1), which can struggle to capture complex higher-order feature interactions. Gradient Boosting uses shallow trees (depth 3–6), allowing it to model complex interactions while predicting fine-grained residual magnitudes rather than just binary directional corrections.
+
+### Core Comparison at a Glance
+
+|  |  |  |
+|--------------------|--------------------------|--------------------------|
+| **Feature** | **AdaBoost** | **Gradient Boosting (GBM)** |
+| **Core Idea** | Adjusts row weights based on errors | Fits new trees directly to residuals ($y - \hat{y}$) |
+| **Individual Trees** | Very simple stumps (Depth = 1) | Shallow trees (Depth = 2–6) |
+| **Optimization Method** | Exponential reweighting | Gradient descent on a loss function |
+| **Outlier Sensitivity** | **High** (gets trapped fitting noise) | **Low to Moderate** (controllable via loss function) |
+| **Flexibility** | Limited to exponential loss | Any differentiable loss function |
+| **Modern Usage** | Rarely used standalone today | Industry standard (via XGBoost, LightGBM, CatBoost) |
+
+## XGBoost: eXtreme Gradient Boosting
+
+While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
+
+XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
+
+### 1. What Makes XGBoost "eXtreme"?
+
+The primary distinction lies in three pillars: **Regularization**, **Second-Order Optimization**, and **System Engineering**.
+
+### 2. Statistical Innovations
+
+#### A. Direct Regularization on Tree Structure
+
+Standard GBM controls model complexity indirectly by limiting tree depth or capping the number of trees. XGBoost explicitly incorporates a **regularization penalty (**$\Omega$) directly into the objective function that the algorithm minimizes at every split:
+
+$$\text{Objective} = \sum_{i=1}^n L(y_i, \hat{y}_i) + \sum_{m=1}^M \Omega(h_m)$$
+
+The penalty term for each tree $\Omega(h)$ is defined as:
+
+$$\Omega(h) = \gamma T + \frac{1}{2} \lambda \sum_{j=1}^T w_j^2 + \alpha \sum_{j=1}^T |w_j|$$
+
+- $T$ (Number of Leaves): $\gamma$ (gamma) penalizes adding new leaf nodes. A split is only allowed if the improvement in loss exceeds $\gamma$ (acting as automated pruning).
+- $w_j$ (Leaf Weights): $\lambda$ ($L_2$ Ridge penalty) and $\alpha$ ($L_1$ Lasso penalty) penalize extreme leaf prediction values, smoothing predictions and preventing individual leaves from overfitting to noisy data points.
+
+------------------------------------------------------------------------
+
+#### B. Second-Order Taylor Expansion (Gradients + Hessians)
+
+Standard Gradient Boosting relies on first-order derivatives (the direction of error, or gradients). XGBoost uses a **second-order Taylor expansion** to approximate the loss function:
+
+$$L(y_i, \hat{y}_i^{(m)}) \approx L(y_i, \hat{y}_i^{(m-1)}) + g_i w + \frac{1}{2} h_i w^2$$
+
+- $g_i$ (Gradient): The first derivative of the loss function (where the error is heading).
+- $h_i$ (Hessian): The second derivative of the loss function (the curvature of the error surface).
+
+::: {.callout-note title="Why Hessians Matter"}
+By using the Hessian ($h_i$), XGBoost measures how fast the gradient is changing. This gives the algorithm "Newton-Raphson" step sizes, allowing it to calculate the precise optimal leaf weights $w_j$ in far fewer boosting iterations than standard GBM.
+:::
+
+------------------------------------------------------------------------
+
+### 3. Algorithmic Innovations
+
+#### A. Native Handling of Missing Values (Sparsity Awareness)
+
+In traditional decision trees, missing data (`NA`s) must be imputed before training. XGBoost handles missing values natively:
+
+1.  During split evaluation, XGBoost sends all observations with missing values for feature $X$ to the **left child**, calculates the split score, and then sends them to the **right child**.
+2.  It compares the loss reduction of both directions and learns a **default direction** for missing values at every single node.
+3.  During inference, if a new observation contains an `NA`, it automatically follows the learned default pathway.
+
+#### B. Feature & Row Subsampling
+
+Borrowing directly from Random Forests, XGBoost supports:
+
+- **Column Subsampling (`colsample_bytree`):** Selects a random subset of features for each tree (equivalent to `mtry`).
+- **Row Subsampling (`subsample`):** Trains each tree on a random fraction of rows (without replacement).
+
+This double-subsampling decorrelates sequential trees further and speeds up execution time.
+
+### 4. System Engineering: Why It's Fast
+
+| Feature | Standard GBM | XGBoost |
+|------------------------|------------------------|------------------------|
+| **Split Finding** | Evaluates all possible split points sequentially across features. | **Exact Greedy** or **Weighted Quantile Sketch** (groups continuous data into histogram bins). |
+| **Parallelization** | Sequential only (must wait for previous tree to finish). | Parallelized split finding across feature columns during node creation. |
+| **Hardware Efficiency** | Standard memory layout. | **Cache-aware block structure** loads feature data directly into CPU L1/L2 caches. |
+
+### 5. Key Hyperparameter Mapping (`tidymodels`)
+
+When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, standard parameters map directly to XGBoost terms:
+
+| Concept | XGBoost Parameter | `tidymodels` Parameter | Description |
+|------------------|------------------|------------------|------------------|
+| **Trees** | `nrounds` / `n_estimators` | `trees` | Total number of sequential trees built. |
+| **Learning Rate** | `eta` | `learn_rate` | Step-size shrinkage used to prevent overfitting ($0.01 - 0.3$). |
+| **Tree Depth** | `max_depth` | `tree_depth` | Maximum depth of a tree ($3 - 10$). |
+| **Min Node Weight** | `min_child_weight` | `min_n` | Minimum sum of instance weight (Hessian) needed in a child node. |
+| **Feature Fraction** | `colsample_bytree` | `mtry` | Proportion of features sampled for each tree. |
+| **Data Fraction** | `subsample` | `sample_size` | Proportion of training rows sampled for each tree. |
+| **Complexity Loss** | `gamma` | `loss_reduction` | Minimum loss reduction required to make a further partition. |
+
+### 6. Summary Comparison: Decision Tree Family
+
+| Algorithm | Model Building | Tree Depth | Overfitting Controls | Primary Strengths |
+|---------------|---------------|---------------|---------------|---------------|
+| **Single Tree** | Single Pass | Deep / Pruned | Cost-complexity pruning | High interpretability |
+| **Random Forest** | Parallel (Bagging) | Deep | Feature randomness (`mtry`) | Low tuning needed; robust variance reduction |
+| **Gradient Boosting** | Sequential (Residuals) | Shallow | Learning rate, early stopping | Low bias; adapts to hard cases |
+| **XGBoost** | Sequential (Gradients + Hessians) | Shallow / Medium | $L_1$/$L_2$ regularization, $\gamma$ pruning, subsampling | Peak predictive power; blazing speed on huge datasets |
+
+#### Fitting XGBoost
 
 ```{r boost-fit}
 boost_spec <- boost_tree(
@@ -1926,7 +2084,7 @@ final_boost_wf <- finalize_workflow(boost_wf, best_boost)
 final_boost_fit <- fit(final_boost_wf, data = camp_train)
 ```
 
-## Boosted Tree Performance
+#### Boosted Tree Performance
 
 ```{r boost-metrics}
 boost_preds <- augment(final_boost_fit, new_data = camp_test)
@@ -1939,7 +2097,7 @@ boost_preds |>
   )
 ```
 
-## The `learn_rate` × `trees` Tradeoff
+#### The `learn_rate` × `trees` Tradeoff
 
 ```{r learn-rate-effect}
 # Fit models with different learn_rate values at fixed tree_depth
@@ -1983,7 +2141,7 @@ Large `learn_rate` (0.30): training AUC is very high but test AUC may be lower �
 The practical recommendation: **use a small `learn_rate` (0.01–0.05) with more trees**. This is almost always the most reliable combination in marketing applications.
 :::
 
-## Variable Importance
+#### Variable Importance
 
 ```{r vip-boost, fig.height=6}
 final_boost_fit |>
@@ -2145,7 +2303,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 ## Three Methods at a Glance
 
 | Method | Key idea | Strengths | Weaknesses |
-|----|----|----|----|
+|------------------|------------------|------------------|------------------|
 | **Decision tree** | Recursive binary splits | Interpretable; visual; handles interactions | High variance; overfits easily without pruning |
 | **Random forest** | Bagging + feature randomness | Low variance; robust; built-in OOB validation | Less interpretable; slow with many trees |
 | **XGBoost** | Sequential error correction | Often best accuracy; flexible | Many hyperparameters; slowest to tune |
@@ -2153,7 +2311,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 ## When to Use Each
 
 | Situation | Recommended |
-|----|----|
+|------------------------------------|------------------------------------|
 | Need to explain the model to non-technical stakeholders | Decision tree (visualizable rules) |
 | Reliable performance with minimal tuning | Random forest |
 | Maximum predictive accuracy; time to tune carefully | XGBoost |
