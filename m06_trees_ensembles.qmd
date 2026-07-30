@@ -23,7 +23,7 @@ execute:
   freeze: true
 ---
 
-# Learning Objectives {.unnumbered}
+# **Learning Objectives** {.unnumbered}
 
 By the end of this notebook you will be able to:
 
@@ -38,7 +38,7 @@ By the end of this notebook you will be able to:
 
 ------------------------------------------------------------------------
 
-# Setup
+# **Setup** {.unnumbered}
 
 ```{r setup}
 #install.packages("rpart.plot")
@@ -65,7 +65,7 @@ The engines for decision trees (`rpart`), random forests (`ranger`), and boosted
 
 ------------------------------------------------------------------------
 
-# The Digital Campaign Dataset
+# **The Digital Campaign Dataset** {.unnumbered}
 
 ## Data Generation
 
@@ -552,9 +552,11 @@ p3 + p4
 
 ------------------------------------------------------------------------
 
-# Train/Test Split and Recipes
+# **Train/Test Splits, Recipes, CV Folds**
 
-## Split
+> Data splits, recipes, and CV folds will be used across all methods.
+
+## Splits
 
 ```{r split}
 set.seed(617)
@@ -576,19 +578,21 @@ cat(
 )
 ```
 
-## Why Trees Need a Different Recipe
+## Recipes
 
-Tree-based models have fundamentally different preprocessing requirements than linear models like Lasso logistic regression.
+### Why Trees Need a Different Recipe
+
+> Tree-based models have fundamentally different preprocessing requirements than linear models like Lasso logistic regression.
 
 ::: {.callout-note title="What trees DON'T need — and why"}
-**`step_normalize()`** — Trees split on *rank order*, not *magnitude*. A split at "income \> 60,000" produces identical results whether income is on the dollar scale or the normalized (z-score) scale. Normalization adds no value and just makes coefficient interpretation harder.
+- **`step_normalize()`** — Trees split on *rank order*, not *magnitude*. A split at "income \> 60,000" produces identical results whether income is on the dollar scale or the normalized (z-score) scale. **Normalization adds no value** and just makes coefficient interpretation harder.
 
-**`step_log()` on predictors** — Logarithm is a monotone transformation — it preserves rank order. If the optimal split for `income` in dollar scale is at \$60,000, the optimal split in log scale is at log(\$60,000). The tree finds the same split either way. No need to transform predictors.
+- **`step_log()` on predictors** — Logarithm is a monotone transformation — it preserves rank order. If the optimal split for `income` in dollar scale is at \$60,000, the optimal split in log scale is at log(\$60,000). The tree finds the same split either way. **No need to transform predictors**.
 
-**Consequence**: the recipe for trees is simpler and produces more interpretable split values (dollar amounts, raw counts) in the tree output.
+- **Consequence**: the recipe for trees is simpler and produces more interpretable split values (dollar amounts, raw counts) in the tree output.
 :::
 
-## Classification Recipe
+### Classification Recipe
 
 ```{r class-recipe}
 # Classification recipe — simpler than Module 2's Lasso recipe
@@ -619,12 +623,16 @@ class_rec
 ```
 
 ::: {.callout-note title="Two new recipe steps for tree models"}
-**`step_unknown()`** — In production, new data may contain factor levels not seen during training (e.g., a new marketing channel is launched after the model was built). Without handling, this causes a prediction error. `step_unknown()` explicitly encodes unseen levels as a new "unknown" category rather than crashing. This is a production-readiness step that becomes important when models are deployed.
+- **`step_unknown()`** — In production, new data may contain factor levels not seen during training (e.g., a new marketing channel is launched after the model was built). Without handling, this causes a prediction error. `step_unknown()` explicitly encodes unseen levels as a new "unknown" category rather than crashing. This is a production-readiness step that becomes important when models are deployed.
 
-**`one_hot = TRUE` in `step_dummy()`** — Standard dummy encoding creates $k - 1$ columns per factor (dropping one reference level) to avoid multicollinearity in linear models. Trees have no multicollinearity problem — they can split on any column independently. Using `one_hot = TRUE` creates all $k$ columns, which sometimes helps trees find better splits by having each category available as a direct split candidate. For example, with `one_hot = TRUE` the tree can split directly on `channel_email == 1` rather than inferring the email effect from the remaining categories.
+- **`one_hot = TRUE` in `step_dummy()`** — Standard dummy encoding creates $k - 1$ columns per factor (dropping one reference level) to avoid multicollinearity in linear models. Trees have no multicollinearity problem — they can split on any column independently.
+
+  - Using `one_hot = TRUE` creates all $k$ columns, which sometimes helps trees find better splits by having each category available as a direct split candidate.
+
+  - For example, with `one_hot = TRUE` the tree can split directly on `channel_email == 1` rather than inferring the email effect from the remaining categories.
 :::
 
-## Regression Recipe
+### Regression Recipe
 
 ```{r reg-recipe}
 # Regression recipe: predict avg_order_amt
@@ -673,11 +681,13 @@ camp_folds
 
 ------------------------------------------------------------------------
 
-# Decision Trees
+# **Decision Trees**
 
 A decision tree is a **non-parametric model** that recursively partitions the predictor space into a set of rectangular, non-overlapping regions. For any new observation, the tree traces a path from top to bottom through a series of binary (yes/no) split questions (e.g., *"Is `cart_adds_30d`* $\ge 2$?") until it lands in a final region, where it assigns a prediction.
 
-## Key Terminology
+## Conceptual Background
+
+### Key Terminology
 
 - **Root Node:** The topmost node in the tree representing the entire dataset before any splits occur.
 - **Internal (Decision) Node:** A node that splits into two child nodes based on a specific threshold of a single predictor variable.
@@ -688,11 +698,11 @@ A decision tree is a **non-parametric model** that recursively partitions the pr
 - **Splitting Rule:** The specific criterion (e.g., Gini impurity or RSS) used to determine the best variable and threshold for dividing data at a node.
 - **Pruning:** The process of trimming back fully-grown branches to reduce model complexity and prevent overfitting.
 
-## How Decision Trees Work
+### How Decision Trees Work
 
 A decision tree recursively splits the training data into regions by asking a series of binary questions: "Is `cart_adds_30d` ≥ 2?" → yes/no, then "Is `recency_days` \< 30?" → yes/no, and so on.
 
-### 1. Classification Trees (Gini Impurity)
+#### A. Classification Trees (Gini Impurity)
 
 Splits are selected to minimize the **Gini Impurity** ($G$) across the child nodes:
 
@@ -706,7 +716,7 @@ Where $\hat{p}_{mk}$ is the proportion of training observations in node $m$ belo
 - The algorithm chooses the split that yields the largest **reduction in weighted Gini impurity** when comparing the parent node to its two child nodes.
 :::
 
-### 2. Regression Trees (Residual Sum of Squares)
+#### B. Regression Trees (Residual Sum of Squares)
 
 For continuous outcomes, splits are selected to minimize the **Residual Sum of Squares (RSS)**:
 
@@ -714,7 +724,7 @@ $$\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
 
 Where $\bar{y}_{R_m}$ is the average response value of training points in region $R_m$.
 
-## Controlling Tree Complexity (Hyperparameters)
+### Controlling Tree Complexity (Hyperparameters)
 
 ::: {.callout-warning title="Why a single deep tree overfits"}
 - A fully grown tree will keep splitting until every leaf contains a single training observation — achieving 100% training accuracy but completely memorizing noise.
@@ -745,7 +755,9 @@ Decision trees evaluate variables **one at a time** (monotonic splits), which gi
 - **Missing Values & Outliers:** Trees naturally accommodate non-linear relationships and are robust to severe feature outliers.
 :::
 
-## Fitting a Classification Tree
+## Clasification Tree
+
+### Fitting a Classification Tree
 
 ```{r tree-fit}
 tree_spec <- decision_tree(
@@ -763,7 +775,7 @@ tree_wf <- workflow() |>
 tree_fit <- fit(tree_wf, data = camp_train)
 ```
 
-## Visualizing the Tree
+### Visualizing the Tree
 
 ```{r tree-plot, fig.height=7, fig.width=12}
 tree_fit |>
@@ -788,7 +800,7 @@ Each node shows three numbers: the **predicted class** (yes/no), the **probabili
 The first few splits reveal the most important predictors — the algorithm chose them because they produce the largest Gini reduction.
 :::
 
-## Fit Output
+### Fit Output
 
 ```         
 > tree_fit |>
@@ -879,7 +891,7 @@ node), split, n, loss, yval, (yprob)
                    792) email_clicks_30d>=1.5 15   2 yes (0.86666667 0.13333333) *
 ```
 
-### Node 1: The Root Node (The Starting Point)
+#### Node 1: The Root Node (The Starting Point)
 
 ``` texinfo
 1) root 3199 764 no (0.23882463 0.76117537)
@@ -899,7 +911,7 @@ node), split, n, loss, yval, (yprob)
 
   - Class 2 (e.g., `"no"`): **76.12%** ($3,199 - 764 = 2,435$ actual `"no"` cases; $764 / 3,199 \approx 0.2388$).
 
-### Node 2: The First Branch (Child Node)
+#### Node 2: The First Branch (Child Node)
 
 ```         
 2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)
@@ -921,7 +933,7 @@ node), split, n, loss, yval, (yprob)
 
   - Class 2 (`"no"`): Decreased from **76.12%** $\rightarrow$ 55.01%
 
-### Executive Interpretation
+#### Executive Interpretation
 
 > *"At the root level (3,199 total customers), about 76.1% of customers are class 'no'. The tree selects `cart_adds_30d` as its very first splitting variable. For customers with at least 2 cart additions (`cart_adds_30d >= 1.5`), the probability of being in class 'yes' nearly doubles from 23.9% to 45.0%."*
 
@@ -933,7 +945,7 @@ In `rpart` tree printouts, child nodes follow a binary numbering convention:
 - Node $N$'s right child is $2N + 1$ (e.g., Node 1 $\rightarrow$ **Node 3** for `cart_adds_30d < 1.5`).
 :::
 
-## Reading Business Rules from the Tree
+### Reading Business Rules from the Tree
 
 ```{r tree-rules}
 # Extract rules from the tree as text
@@ -943,7 +955,7 @@ tree_fit |>
   rpart.plot::rpart.rules(cover = TRUE, style = "tall")
 ```
 
-## Classification Tree Performance
+### Classification Tree Performance
 
 ```{r tree-metrics}
 tree_preds <- augment(tree_fit, new_data = camp_test)
@@ -960,7 +972,7 @@ conf_mat(tree_preds, truth = purchased, estimate = .pred_class) |>
   autoplot(type = "heatmap")
 ```
 
-## The Overfitting Problem — Shallow vs. Deep Tree
+### The Overfitting Problem — Shallow vs. Deep Tree
 
 ```{r tree-overfit}
 # Compare a very deep tree vs. a pruned tree
@@ -1256,7 +1268,7 @@ baseline_tree_metrics |>
 
 ```
 
-::: {.callout-warning title="Teaching Moment: Why Did the 'Tuned' Model Have Worse Test Metrics?"}
+::: {.callout-warning title="Why Did the 'Tuned' Model Have Worse Test Metrics?"}
 Looking at the test set metrics, the baseline manual tree ($RMSE = 49.1$) appears to outperform the CV-tuned tree ($RMSE = 51.4$). Why did automated tuning give us a "worse" result?
 
 1.  **Sampling Variation in the Test Set:** Cross-validation estimates performance across 10 different folds of the training data. The holdout test set is a single sample. By chance, the manual model's extra complexity happened to fit the test set's specific data points better.
@@ -1294,7 +1306,7 @@ final_tree_fit |>
 
 ------------------------------------------------------------------------
 
-# Random Forests
+# **Random Forests**
 
 ## Conceptual Overview
 
@@ -1340,7 +1352,7 @@ Full Dataset (e.g., 1,000 rows)
   (Full decision flowchart)     (Full decision flowchart)     (Full decision flowchart)
 ```
 
-## 1. From One Tree to Many: Bagging (Bootstrap Aggregating)
+### From One Tree to Many: Bagging (Bootstrap Aggregating)
 
 A single decision tree is notorious for having **high variance**: small perturbations in the training data can alter the root split and result in a completely different tree structure.
 
@@ -1366,7 +1378,7 @@ To overcome this instability, we turn to an ensemble method called **Bagging (Bo
 - For Classification: Rather than averaging continuous values, each tree votes for a discrete class label, and $\hat{f}_{\text{bag}}(x)$ represents the majority vote (or the average predicted probability across all $B$ trees).
 :::
 
-### Why Bagging Works: The Mathematics of Variance Reduction
+#### Why Bagging Works: The Mathematics of Variance Reduction
 
 If we have $B$ independent and identically distributed (i.i.d.) random variables each with variance $\sigma^2$, the variance of their average is:
 
@@ -1390,7 +1402,7 @@ As $B \to \infty$, the second term drops to zero, but the first term ($\rho \sig
 
 ------------------------------------------------------------------------
 
-## 2. De-Correlating Trees: The Random Forest Breakthrough
+### De-Correlating Trees: The Random Forest Breakthrough
 
 If a dataset has one or two dominant predictors (e.g., `income` or `recency_days`), **every single bagged tree will select that dominant predictor for its root split**. Consequently, all trees in the bagged ensemble look almost identical ($\rho \approx 1$).
 
@@ -1407,7 +1419,7 @@ By forcing trees to ignore dominant predictors at many nodes, feature randomness
 
 ------------------------------------------------------------------------
 
-## 3. Out-of-Bag (OOB) Error: "Free" Validation
+### Out-of-Bag (OOB) Error: "Free" Validation
 
 Because each bootstrap sample selects approximately $63.2\%$ of unique observations, the remaining $\sim 36.8\%$ of data points are left out for that specific tree. These are called **Out-of-Bag (OOB)** observations.
 
@@ -1418,7 +1430,7 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 
 ------------------------------------------------------------------------
 
-## 4. Key Hyperparameters in `tidymodels` (`rand_forest`)
+### Key Hyperparameters in `tidymodels` (`rand_forest`)
 
 | Math Symbol | Concept | `tidymodels` Argument | Default (`ranger` engine) | Practical Guidance |
 |---------------|---------------|---------------|---------------|---------------|
@@ -1428,14 +1440,14 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 
 ------------------------------------------------------------------------
 
-## 5. Feature Importance: Peeking Inside the "Black Box"
+### Feature Importance: Peeking Inside the "Black Box"
 
 While individual decision trees produce simple flowchart diagrams, Random Forests aggregate hundreds of trees, sacrificing direct diagram visualizability. To restore interpretability, we measure **Variable Importance**:
 
 1.  **Mean Decrease in Impurity (MDI / Gini Importance):** Sums the total reduction in Gini impurity (or RSS) brought about by splits on feature $X_j$, averaged across all trees.
 2.  **Permutation Importance (OOB Drop):** Randomly shuffles (scrambles) feature $X_j$ in the OOB data and measures how much predictive accuracy degrades. Larger drops in accuracy indicate higher feature importance.
 
-## Fitting a Random Forest with 10 Fold CV
+## Random Forest with 10 Fold CV
 
 ### Fitting a Random Forest
 
@@ -1601,7 +1613,7 @@ By combining 500 decorrelated trees via **bagging** and **feature randomness (`m
 In the previous code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
-## Fitting Random Forest with OBB Tuning
+## Random Forest with OBB Tuning
 
 - Instead of re-fitting each forest 10 times across 10 folds, you evaluate each candidate forest exactly ONCE on its own built-in Out-of-Bag (OOB) predictions.
 
@@ -1728,7 +1740,7 @@ Compared with using time-consuming 10 Fold CV-tuned method, the default method r
 
 ------------------------------------------------------------------------
 
-# Boosted Trees
+# **Boosted Trees**
 
 ## The Sequential Correction Idea
 
@@ -1752,13 +1764,13 @@ Each iteration corrects the mistakes of the previous ensemble — slowly buildin
 **`tree_depth`** — how deep each individual tree is. Boosting typically uses **shallow trees** (depth 1–6), unlike random forests which use full-depth trees. Shallow trees are weak learners — but boosting combines many of them into a strong ensemble. Deeper trees can model more complex interactions per step but increase overfitting risk.
 :::
 
-## AdaBoost (Adaptive Boosting)
+# **AdaBoost** (Adaptive Boosting)
 
-### What is AdaBoost?
+## What is AdaBoost?
 
 While Random Forests build hundreds of deep, independent trees in **parallel** (bagging), AdaBoost builds a chain of simple decision trees in **sequence** (boosting).
 
-#### The Core Mechanics
+### The Core Mechanics
 
 1.  **Start with Equal Weights:** Every observation in the training set starts with an equal weight.
 
@@ -1778,23 +1790,23 @@ While Random Forests build hundreds of deep, independent trees in **parallel** (
 [ Stump 1 ] ──► Misclassified rows weighted UP ──► [ Stump 2 ] ──► Misclassified rows weighted UP ──► [ Stump 3 ] ...
 ```
 
-### Is AdaBoost "Better" Than Random Forest?
+## Is AdaBoost "Better" Than Random Forest?
 
 Short answer: Neither is strictly "better"—they trade off bias and variance differently.
 
-#### Why AdaBoost Can Beat Random Forest
+### Why AdaBoost Can Beat Random Forest
 
 - **Lower Bias:** Because each tree focuses specifically on what previous trees got wrong, boosting can fit complex, non-linear boundaries that a Random Forest might smooth over.
 
 - **Parsimony:** AdaBoost often achieves high accuracy with fewer splits overall than an unpruned forest.
 
-#### Why Random Forest Often Beats AdaBoost in Practice
+### Why Random Forest Often Beats AdaBoost in Practice
 
 - **Sensitivity to Noise and Outliers:** Because AdaBoost exponentially increases the weight of misclassified points, an outlier or mislabeled data point will get huge weight. The algorithm can become obsessed with fitting noisy observations, leading to **severe overfitting**.
 
 - **Parallelization:** Random Forest trains all 500 trees simultaneously across CPU cores. AdaBoost must wait for Stump 1 to finish before Stump 2 can evaluate errors.
 
-## Gradient Boosting: Learning from Residuals
+# **Gradient Boosting**: Learning from Residuals
 
 While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
 
@@ -1802,7 +1814,7 @@ While **AdaBoost** adjusts row weights to force subsequent trees to focus on har
 
 - Gradient boosting for classification
 
-### 1. The Core Intuition: Golfing Toward the Target
+## The Core Intuition: Golfing Toward the Target
 
 Think of Gradient Boosting like a golfer trying to hit a ball into a hole:
 
@@ -1816,11 +1828,11 @@ $$\text{Final Prediction} = \text{Shot}_1 + \text{Shot}_2 + \text{Shot}_3 + \dot
 
 ------------------------------------------------------------------------
 
-### 2. Step-by-Step Algorithm (Regression Example)
+## Step-by-Step Algorithm (Regression Example)
 
 To predict a continuous target variable $y$ using features $X$:
 
-#### Step 1: Initialize with a Baseline Constant
+### Step 1: Initialize with a Baseline Constant
 
 Start with a single constant prediction $\hat{f}_0(x)$—typically the mean of $y$ for all observations:
 
@@ -1828,7 +1840,7 @@ $$\hat{f}_0(x) = \bar{y}$$
 
 ------------------------------------------------------------------------
 
-#### Step 2: Sequentially Fit Trees to Residuals
+### Step 2: Sequentially Fit Trees to Residuals
 
 For $m = 1$ to $M$ (where $M$ is the total number of trees):
 
@@ -1840,7 +1852,7 @@ For $m = 1$ to $M$ (where $M$ is the total number of trees):
 
 ------------------------------------------------------------------------
 
-#### Step 3: Output the Final Ensemble Model
+### Step 3: Output the Final Ensemble Model
 
 After fitting $M$ trees, the final prediction is:
 
@@ -1848,7 +1860,7 @@ $$\hat{f}(x) = \hat{f}_0(x) + \eta \sum_{m=1}^M h_m(x)$$
 
 ------------------------------------------------------------------------
 
-### 3. Why the Name *Gradient* Boosting?
+## Why the Name *Gradient* Boosting?
 
 When using squared error loss $L(y, \hat{y}) = \frac{1}{2}(y - \hat{y})^2$, the negative gradient of the loss function with respect to the prediction is:
 
@@ -1866,17 +1878,17 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 
 ------------------------------------------------------------------------
 
-### 4. Key Hyperparameters in Gradient Boosting
+## Key Hyperparameters in Gradient Boosting
 
 Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
-|-----------------|-----------------|-----------------|-----------------------|
+|-----------------|-----------------|-----------------|--------------------|
 | $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
 | $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
 | $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
 
-### 5. Summary: Bagging vs. Boosting Comparison
+## Summary Comparison: Bagging vs. Boosting Comparison
 
 | Property | Random Forest | Gradient Boosting |
 |---------------------|-----------------------|----------------------------|
@@ -1886,7 +1898,7 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 | **Risk of Overfitting** | Low (adding trees stabilizes error) | High (requires early stopping / tuning $M$) |
 | **Tuning Sensitivity** | Low (defaults work well) | High (requires tuning `trees`, `learn_rate`, `tree_depth`) |
 
-### 6. Gradient Boosting vs. Adaboost
+## Gradient Boosting vs. Adaboost
 
 **Gradient Boosting is a generalization and upgrade of AdaBoost.** While AdaBoost was a brilliant proof-of-concept for sequential learning, Gradient Boosting replaced AdaBoost’s specific "reweighting" trick with a flexible mathematical framework based on gradient descent.
 
@@ -1894,7 +1906,7 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
 ```
 
-#### AdaBoost (Adaptive Boosting)
+### AdaBoost (Adaptive Boosting)
 
 - **The Mechanism:** Starts with equal weights for every row. After fitting a tree (usually a 1-split decision stump), it **increases the weights of misclassified rows** and decreases the weights of correct ones.
 
@@ -1902,7 +1914,7 @@ AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEI
 
 - **Voting:** Final predictions are made via a **weighted vote**, where high-accuracy trees get more say than weaker trees.
 
-#### Gradient Boosting (GBM)
+### Gradient Boosting (GBM)
 
 - **The Mechanism:** Instead of changing row weights, the next tree is trained to directly predict the **residuals** (the leftover mathematical error $y - \hat{y}$) of all previous trees combined.
 
@@ -1910,15 +1922,15 @@ AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEI
 
 - **Voting:** Final predictions are made by **adding up the outputs** of all trees scaled by a learning rate ($\eta$).
 
-### Is Gradient Boosting "Better" Than AdaBoost
+## Is Gradient Boosting "Better" Than AdaBoost
 
-#### A. Robustness to Noise and Outliers (The Major Flaw of AdaBoost)
+### A. Robustness to Noise and Outliers (The Major Flaw of AdaBoost)
 
 Because AdaBoost **exponentially increases** the weights of misclassified observations, an outlier or mislabeled data point will quickly dominate the weights. AdaBoost gets "obsessed" with fitting noise, leading to **severe overfitting**.
 
 Gradient Boosting, by contrast, uses differentiable loss functions (like Huber loss or absolute error) that can gracefully down-weight extreme outliers.
 
-#### B. Loss Function Flexibility
+### B. Loss Function Flexibility
 
 - **AdaBoost** is strictly tied to **exponential loss** (for classification) or square error loss variants.
 
@@ -1932,11 +1944,11 @@ Gradient Boosting, by contrast, uses differentiable loss functions (like Huber l
 
   - **Poisson / Tweedie:** For count data or insurance claims.
 
-#### C. Capacity to Scale & Complex Patterns
+### C. Capacity to Scale & Complex Patterns
 
 AdaBoost typically relies on **decision stumps** (trees with a depth of 1), which can struggle to capture complex higher-order feature interactions. Gradient Boosting uses shallow trees (depth 3–6), allowing it to model complex interactions while predicting fine-grained residual magnitudes rather than just binary directional corrections.
 
-### Core Comparison at a Glance
+## Core Comparison at a Glance
 
 |  |  |  |
 |--------------------|--------------------------|--------------------------|
@@ -1948,19 +1960,19 @@ AdaBoost typically relies on **decision stumps** (trees with a depth of 1), whic
 | **Flexibility** | Limited to exponential loss | Any differentiable loss function |
 | **Modern Usage** | Rarely used standalone today | Industry standard (via XGBoost, LightGBM, CatBoost) |
 
-## XGBoost: eXtreme Gradient Boosting
+# **XGBoost**: eXtreme Gradient Boosting
 
 While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
 
 XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
 
-### 1. What Makes XGBoost "eXtreme"?
+## What Makes XGBoost "eXtreme"?
 
 The primary distinction lies in three pillars: **Regularization**, **Second-Order Optimization**, and **System Engineering**.
 
-### 2. Statistical Innovations
+## Statistical Innovations
 
-#### A. Direct Regularization on Tree Structure
+### A. Direct Regularization on Tree Structure
 
 Standard GBM controls model complexity indirectly by limiting tree depth or capping the number of trees. XGBoost explicitly incorporates a **regularization penalty (**$\Omega$) directly into the objective function that the algorithm minimizes at every split:
 
@@ -1975,7 +1987,7 @@ $$\Omega(h) = \gamma T + \frac{1}{2} \lambda \sum_{j=1}^T w_j^2 + \alpha \sum_{j
 
 ------------------------------------------------------------------------
 
-#### B. Second-Order Taylor Expansion (Gradients + Hessians)
+### B. Second-Order Taylor Expansion (Gradients + Hessians)
 
 Standard Gradient Boosting relies on first-order derivatives (the direction of error, or gradients). XGBoost uses a **second-order Taylor expansion** to approximate the loss function:
 
@@ -1990,9 +2002,9 @@ By using the Hessian ($h_i$), XGBoost measures how fast the gradient is changing
 
 ------------------------------------------------------------------------
 
-### 3. Algorithmic Innovations
+## Algorithmic Innovations
 
-#### A. Native Handling of Missing Values (Sparsity Awareness)
+### A. Native Handling of Missing Values (Sparsity Awareness)
 
 In traditional decision trees, missing data (`NA`s) must be imputed before training. XGBoost handles missing values natively:
 
@@ -2000,7 +2012,7 @@ In traditional decision trees, missing data (`NA`s) must be imputed before train
 2.  It compares the loss reduction of both directions and learns a **default direction** for missing values at every single node.
 3.  During inference, if a new observation contains an `NA`, it automatically follows the learned default pathway.
 
-#### B. Feature & Row Subsampling
+### B. Feature & Row Subsampling
 
 Borrowing directly from Random Forests, XGBoost supports:
 
@@ -2009,7 +2021,7 @@ Borrowing directly from Random Forests, XGBoost supports:
 
 This double-subsampling decorrelates sequential trees further and speeds up execution time.
 
-### 4. System Engineering: Why It's Fast
+## System Engineering: Why It's Fast
 
 | Feature | Standard GBM | XGBoost |
 |------------------------|------------------------|------------------------|
@@ -2017,7 +2029,7 @@ This double-subsampling decorrelates sequential trees further and speeds up exec
 | **Parallelization** | Sequential only (must wait for previous tree to finish). | Parallelized split finding across feature columns during node creation. |
 | **Hardware Efficiency** | Standard memory layout. | **Cache-aware block structure** loads feature data directly into CPU L1/L2 caches. |
 
-### 5. Key Hyperparameter Mapping (`tidymodels`)
+## Key Hyperparameter Mapping (`tidymodels`)
 
 When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, standard parameters map directly to XGBoost terms:
 
@@ -2031,7 +2043,7 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Data Fraction** | `subsample` | `sample_size` | Proportion of training rows sampled for each tree. |
 | **Complexity Loss** | `gamma` | `loss_reduction` | Minimum loss reduction required to make a further partition. |
 
-### 6. Summary Comparison: Decision Tree Family
+## Summary Comparison: Decision Tree Family
 
 | Algorithm | Model Building | Tree Depth | Overfitting Controls | Primary Strengths |
 |---------------|---------------|---------------|---------------|---------------|
@@ -2040,7 +2052,7 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Gradient Boosting** | Sequential (Residuals) | Shallow | Learning rate, early stopping | Low bias; adapts to hard cases |
 | **XGBoost** | Sequential (Gradients + Hessians) | Shallow / Medium | $L_1$/$L_2$ regularization, $\gamma$ pruning, subsampling | Peak predictive power; blazing speed on huge datasets |
 
-#### Fitting XGBoost
+## Fitting XGBoost
 
 ```{r boost-fit}
 boost_spec <- boost_tree(
@@ -2085,7 +2097,7 @@ final_boost_wf <- finalize_workflow(boost_wf, best_boost)
 final_boost_fit <- fit(final_boost_wf, data = camp_train)
 ```
 
-#### Boosted Tree Performance
+## Boosted Tree Performance
 
 ```{r boost-metrics}
 boost_preds <- augment(final_boost_fit, new_data = camp_test)
@@ -2098,7 +2110,7 @@ boost_preds |>
   )
 ```
 
-#### The `learn_rate` × `trees` Tradeoff
+## The `learn_rate` × `trees` Tradeoff
 
 ```{r learn-rate-effect}
 # Fit models with different learn_rate values at fixed tree_depth
@@ -2142,7 +2154,7 @@ Large `learn_rate` (0.30): training AUC is very high but test AUC may be lower �
 The practical recommendation: **use a small `learn_rate` (0.01–0.05) with more trees**. This is almost always the most reliable combination in marketing applications.
 :::
 
-#### Variable Importance
+## Variable Importance
 
 ```{r vip-boost, fig.height=6}
 final_boost_fit |>
@@ -2160,7 +2172,7 @@ final_boost_fit |>
 
 ------------------------------------------------------------------------
 
-# Model Comparison
+# **Model Comparison**
 
 ## All Models on the Same Test Set
 
@@ -2299,7 +2311,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 
 ------------------------------------------------------------------------
 
-# Summary
+# **Summary**
 
 ## Three Methods at a Glance
 
@@ -2333,7 +2345,7 @@ recipe(outcome ~ ., data = train) |>
 
 ------------------------------------------------------------------------
 
-# Exercises
+# **Exercises**
 
 ## ✏️ Exercise 6.1 — Decision Tree Pruning
 
