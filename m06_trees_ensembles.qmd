@@ -2412,6 +2412,3 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 
 ```
 
-# Appendix
-
-- [My published Notebook](https://jaejungca.github.io/trees-ensembles/m06_trees_ensembles.html#model-comparison-single-tree-vs.-random-forest)
