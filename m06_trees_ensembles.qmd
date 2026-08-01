@@ -6,7 +6,7 @@ date: today
 format:
   html:
     toc: true
-    toc-depth: 4
+    toc-depth: 5
     toc-expand: 1
     toc-location: right-body
     toc-title: "Contents"
@@ -15,7 +15,7 @@ format:
     code-tools: true
     theme: cosmo
     highlight-style: github
-    df-print: paged
+    df-print: kable
     embed-resources: true
 engine: knitr
 execute:
@@ -349,27 +349,27 @@ Each customer receives an adjustment based on loyalty tier:
 
 ```{r}
 #| eval: false
- logit_purchase <- -5.0 + # intercept → ~ 1/(1 + exp(-(-5)) = 0.67% base rate; predictors raise overall purchase rate to around 24%
-        0.70 * log1p(site_visits_30d) +
-        0.55 * log1p(email_clicks_30d) +
-        0.75 * cart_adds_30d +
-        0.35 * freq_12mo -
-        0.022 * recency_days +
-        0.30 * log(income / 65000) +
-        loyalty_effect +
-        channel_effect +
-        device_effect +
-        discount_bronze_boost +
-        high_engagement_boost +
-        recent_frequent_boost +
-        email_click_boost +
-        rnorm(n, mean = 0, sd = 0.45)
-    
-    factor(
-        rbinom(n, size = 1, prob = plogis(logit_purchase)),
-        levels = c(1, 0),
-        labels = c("yes", "no")
-      )
+logit_purchase <- -5.0 + # intercept → ~ 1/(1 + exp(-(-5)) = 0.67% base rate; predictors raise overall purchase rate to around 24%
+  0.70 * log1p(site_visits_30d) +
+  0.55 * log1p(email_clicks_30d) +
+  0.75 * cart_adds_30d +
+  0.35 * freq_12mo -
+  0.022 * recency_days +
+  0.30 * log(income / 65000) +
+  loyalty_effect +
+  channel_effect +
+  device_effect +
+  discount_bronze_boost +
+  high_engagement_boost +
+  recent_frequent_boost +
+  email_click_boost +
+  rnorm(n, mean = 0, sd = 0.45)
+
+factor(
+  rbinom(n, size = 1, prob = plogis(logit_purchase)),
+  levels = c(1, 0),
+  labels = c("yes", "no")
+)
 ```
 
 -   **Intercept** = Baseline probability by converting the logit score to purchase probability as:
@@ -426,7 +426,6 @@ $$
   rbinom(10, 5, 0.6)
   ```
 
-
   **Campaign Data:**
 
   In the code, `size = 5` means:
@@ -459,6 +458,7 @@ $$
 `purchased` reflects a realistic digital marketing conversion funnel with **four layers of signal**:
 
 ::: {.callout-note title="What drives purchase probability"}
+
 **Behavioral engagement (strongest signals)**
 
 -   `cart_adds_30d` — customers who add items to their cart are most likely to convert; this is the single strongest predictor
@@ -486,6 +486,7 @@ $$
 -   High site visits AND email clicks → disproportionate engagement effect
 -   Recently active AND frequent buyers → amplified recency × frequency boost
 -   Email channel AND multiple email clicks → channel × engagement amplification
+
 :::
 
 ```{r response-rate}
@@ -764,7 +765,10 @@ Unconstrained decision trees will continue splitting until every leaf is complet
 
 2.  **Minimum Split Size (`min_n`):** The minimum number of training observations required in a node for a split to be attempted.
 
-3.  **Cost-Complexity Parameter (`cost_complexity` /** $\alpha$): A penalty factor that penalizes larger trees. The algorithm minimizes: $$\text{Cost (or Tree Score)} = \text{Error} + \alpha \times (\text{Number of Leaves})$$
+3.  **Cost-Complexity Parameter (`cost_complexity` /** $\alpha$): A penalty factor that penalizes larger trees. The algorithm minimizes: 
+$$
+\text{Cost (or Tree Score)} = \text{Error} + \alpha \times (\text{Number of Leaves})
+$$
 
     -   $\text{Cost}$ is Tree score.
     -   $\text{Error}$ is SSR in Regression trees
@@ -981,6 +985,71 @@ tree_fit |>
   rpart.plot::rpart.rules(cover = TRUE, style = "tall")
 ```
 
+#### How to Read a Single Rule Block
+
+Every block in the output follows this exact template:
+
+```r
+..y is [PREDICTION] with cover [SIZE OF SEGMENT] when
+    [Condition 1]
+    [Condition 2]
+    [Condition 3]
+```
+-   `y is ...`: The target outcome the tree is predicting (e.g., probability of purchasing). Higher numbers mean higher probability.
+
+-   `cover ...`: How large this segment is. 
+
+  -   `cover 31%` means 31% of all your data falls into this exact bucket. 
+  -   `cover 0%` means less than 0.5% (a tiny fraction) fell here.
+
+-   `when ...`: The exact behavior or demographics required to place a customer into this segment. All conditions in a block must be true at the same time.
+
+:::callout-tip
+
+#### Decision Tree Analysis: Key Drivers of Purchase Behavior
+To identify the primary behavioral patterns driving customer conversion, an `rpart` decision tree model was evaluated across the dataset using the target variable `Purchased` (1 = Purchase, 0 = No Purchase).
+
+**Segment A: Passive Recent Engagers (31% of all customers)**
+
+```r
+..y is 0.93 with cover 31% when
+    cart_adds_30d < 1.5
+    recency_days >= 28
+    email_clicks_30d < 1.5
+```
+-   Purchase Likelihood: 93%
+-   Volume: 31% of your entire customer base
+-   *Interpretation*: This is your core conversion engine. Customers who haven't needed to add items to their cart recently or click marketing emails because they are already established, returning buyers.
+
+**Segment B: Low-Threshold Browsers (11% of all customers)**
+
+```r
+..y is 0.91 with cover 11% when
+    cart_adds_30d < 1.5
+    recency_days < 28
+    freq_12mo < 3.5
+    site_visits_30d < 3.5
+    email_clicks_30d < 1.5
+```
+-   Purchase Likelihood: 91%
+-   Volume: 11% of your customer base
+-   *Interpretation*: Recent visitors with lower overall engagement metrics who still convert at extremely high rates without needing heavy promotional pushing.
+
+**Segment C: High Intent / High Friction (Cart Abandoners)**
+
+```r
+..y is 0.08 with cover 1% when
+    cart_adds_30d >= 1.5
+    recency_days < 27
+    site_visits_30d is 1.5 to 4.5
+    email_clicks_30d >= 1.5
+    channel_email >= 0.5
+```
+
+-   Purchase Likelihood: Only 8% (92% non-conversion rate!)
+-   *Interpretation*: These users actively add items to their cart (cart_adds_30d >= 1.5), visit the site, and click email links, yet fail to convert. This indicates high intent but potential friction at checkout (e.g., unexpected shipping costs or payment issues).
+:::
+
 ### Classification Tree Performance
 
 ```{r tree-metrics}
@@ -1157,8 +1226,8 @@ reg_tree_spec <- decision_tree(
   set_mode("regression")
 
 # 2. Workflow Setup
-reg_tree_wf <- workflow() |> 
-  add_recipe(reg_rec) |> 
+reg_tree_wf <- workflow() |>
+  add_recipe(reg_rec) |>
   add_model(reg_tree_spec)
 
 # 3. Fit Model
@@ -1255,8 +1324,8 @@ We select the best `cost_complexity` value using the **1-Standard Error rule** (
 # 1. Select Best Cp using the 1-SE Rule
 
 best_cp_1se <- select_by_one_std_err(
-  tune_results, 
-  metric = "rmse", 
+  tune_results,
+  metric = "rmse",
   desc(cost_complexity) # prefer larger cp (simpler tree)
 )
 
@@ -1285,13 +1354,13 @@ tuned_tree_metrics <- final_tree_preds |>
     r2 = cor(pred_dollar, actual_dollar, use = "complete.obs")^2
   )
 
-baseline_tree_metrics |> 
-  mutate(model = "Baseline Tree Metrics") |> 
-  bind_rows(tuned_tree_metrics |> 
-              mutate(model = "Tuned Tree Metrics")
-            ) |> 
+baseline_tree_metrics |>
+  mutate(model = "Baseline Tree Metrics") |>
+  bind_rows(
+    tuned_tree_metrics |>
+      mutate(model = "Tuned Tree Metrics")
+  ) |>
   relocate(model, .before = 1)
-
 ```
 
 ::: {.callout-warning title="Why Did the 'Tuned' Model Have Worse Test Metrics?"}
@@ -1525,7 +1594,6 @@ stopCluster(cl)
 autoplot(rf_tune_results) +
   labs(title = "Random Forest Tuning — AUC Across mtry and min_n") +
   theme_minimal(base_size = 11)
-
 ```
 
 ```{r rf-best}
@@ -1732,16 +1800,15 @@ rf_default_wf <- workflow() |>
 
 rf_default_fit <- fit(rf_default_wf, data = camp_train)
 
-# Performance 
+# Performance
 rf_default_preds <- augment(rf_default_fit, new_data = camp_test)
 
-rf_default_preds |> 
+rf_default_preds |>
   metric_set(accuracy, roc_auc, sens, spec)(
     truth = purchased,
     estimate = .pred_class,
     .pred_yes
   )
-
 ```
 
 ### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
