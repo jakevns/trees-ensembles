@@ -619,31 +619,28 @@ cat(
 -   **Consequence**: the recipe for trees is simpler and produces more interpretable split values (dollar amounts, raw counts) in the tree output.
 :::
 
+To avoid potential problems with step_log() in recipe, we will add log-transformed variable `log_avg_order_amt` to the data - train set and test set.
+
+```{r log-transform}
+# log-transform the OUTCOME (not predictors) to handle right skew
+
+camp_train <- camp_train |>
+  mutate(log_avg_order_amt = log(avg_order_amt))
+```
+
 ### Classification Recipe
 
 ```{r class-recipe}
 # Classification recipe — simpler than Module 2's Lasso recipe
 class_rec <- recipe(
-  purchased ~ customer_id +
-    age +
-    income +
-    recency_days +
-    freq_12mo +
-    avg_order_amt +
-    site_visits_30d +
-    email_clicks_30d +
-    discount_rate_seen +
-    cart_adds_30d +
-    channel +
-    region +
-    loyalty_tier +
-    device,
+  purchased ~ .,
   data = camp_train
 ) |>
   update_role(customer_id, new_role = "ID") |>
-  step_impute_median(all_numeric_predictors()) |> # still needed — trees can't handle NA
-  step_unknown(all_nominal_predictors()) |> # NEW: handle unseen factor levels
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # NEW: one-hot for trees
+  update_role(log_avg_order_amt, new_role = "unused") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |> # handle previously unseen levels
+  step_unknown(all_nominal_predictors()) |> # handle missing categorical values
   step_zv(all_predictors())
 
 class_rec
@@ -663,29 +660,20 @@ class_rec
 
 ```{r reg-recipe}
 # Regression recipe: predict avg_order_amt
-# log-transform the OUTCOME (not predictors) to handle right skew
+
 reg_rec <- recipe(
-  avg_order_amt ~ customer_id +
-    age +
-    income +
-    recency_days +
-    freq_12mo +
-    site_visits_30d +
-    email_clicks_30d +
-    discount_rate_seen +
-    cart_adds_30d +
-    channel +
-    region +
-    loyalty_tier +
-    device,
+  log_avg_order_amt ~ .,
   data = camp_train
 ) |>
   update_role(customer_id, new_role = "ID") |>
+  update_role(purchased, new_role = "unused") |>
+  update_role(avg_order_amt, new_role = "outcome_original") |>
   step_impute_median(all_numeric_predictors()) |>
-  step_unknown(all_nominal_predictors()) |>
-  step_mutate(avg_order_amt = log(avg_order_amt)) |> # log-transform OUTCOME
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
+  step_novel(all_nominal_predictors()) |> # handle previously unseen levels
+  step_unknown(all_nominal_predictors()) |> # handle missing categorical value
   step_zv(all_predictors())
+
+reg_rec
 ```
 
 ::: {.callout-note title="Why log-transform the outcome but not the predictors?"}
@@ -830,100 +818,17 @@ Each node shows three numbers: the **predicted class** (yes/no), the **probabili
 The first few splits reveal the most important predictors — the algorithm chose them because they produce the largest Gini reduction.
 :::
 
-### Fit Output
+### Extracting the Fitted Tree
 
-```         
-> tree_fit |>
-+   extract_fit_engine()
-n= 3199 
-
-node), split, n, loss, yval, (yprob)
-      * denotes terminal node
-
-   1) root 3199 764 no (0.23882463 0.76117537)  
-     2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)  
-       4) recency_days< 26.5 356 147 yes (0.58707865 0.41292135)  
-         8) email_clicks_30d>=1.5 208  64 yes (0.69230769 0.30769231)  
-          16) site_visits_30d>=4.5 57   5 yes (0.91228070 0.08771930) *
-          17) site_visits_30d< 4.5 151  59 yes (0.60927152 0.39072848)  
-            34) channel_email>=0.5 58  11 yes (0.81034483 0.18965517)  
-              68) site_visits_30d>=1.5 38   3 yes (0.92105263 0.07894737) *
-              69) site_visits_30d< 1.5 20   8 yes (0.60000000 0.40000000)  
-               138) age< 43.5 9   1 yes (0.88888889 0.11111111) *
-               139) age>=43.5 11   4 no (0.36363636 0.63636364) *
-            35) channel_email< 0.5 93  45 no (0.48387097 0.51612903)  
-              70) freq_12mo>=3.5 32   8 yes (0.75000000 0.25000000) *
-              71) freq_12mo< 3.5 61  21 no (0.34426230 0.65573770)  
-               142) income>=40431 50  21 no (0.42000000 0.58000000)  
-                 284) avg_order_amt>=107.56 16   5 yes (0.68750000 0.31250000) *
-                 285) avg_order_amt< 107.56 34  10 no (0.29411765 0.70588235)  
-                   570) channel_social>=0.5 8   3 yes (0.62500000 0.37500000) *
-                   571) channel_social< 0.5 26   5 no (0.19230769 0.80769231) *
-               143) income< 40431 11   0 no (0.00000000 1.00000000) *
-         9) email_clicks_30d< 1.5 148  65 no (0.43918919 0.56081081)  
-          18) freq_12mo>=3.5 53  19 yes (0.64150943 0.35849057)  
-            36) age>=35.5 35   8 yes (0.77142857 0.22857143)  
-              72) discount_rate_seen>=0.075 28   4 yes (0.85714286 0.14285714) *
-              73) discount_rate_seen< 0.075 7   3 no (0.42857143 0.57142857) *
-            37) age< 35.5 18   7 no (0.38888889 0.61111111) *
-          19) freq_12mo< 3.5 95  31 no (0.32631579 0.67368421)  
-            38) avg_order_amt>=168.505 14   5 yes (0.64285714 0.35714286) *
-            39) avg_order_amt< 168.505 81  22 no (0.27160494 0.72839506)  
-              78) income>=39538.5 61  20 no (0.32786885 0.67213115)  
-               156) site_visits_30d>=4.5 18   8 yes (0.55555556 0.44444444) *
-               157) site_visits_30d< 4.5 43  10 no (0.23255814 0.76744186) *
-              79) income< 39538.5 20   2 no (0.10000000 0.90000000) *
-       5) recency_days>=26.5 433 146 no (0.33718245 0.66281755)  
-        10) cart_adds_30d>=2.5 105  49 yes (0.53333333 0.46666667)  
-          20) site_visits_30d>=4.5 36  10 yes (0.72222222 0.27777778)  
-            40) discount_rate_seen>=0.075 24   3 yes (0.87500000 0.12500000) *
-            41) discount_rate_seen< 0.075 12   5 no (0.41666667 0.58333333) *
-          21) site_visits_30d< 4.5 69  30 no (0.43478261 0.56521739)  
-            42) email_clicks_30d>=1.5 51  24 yes (0.52941176 0.47058824)  
-              84) freq_12mo>=1.5 41  16 yes (0.60975610 0.39024390)  
-               168) recency_days< 51.5 14   2 yes (0.85714286 0.14285714) *
-               169) recency_days>=51.5 27  13 no (0.48148148 0.51851852)  
-                 338) region_South>=0.5 8   1 yes (0.87500000 0.12500000) *
-                 339) region_South< 0.5 19   6 no (0.31578947 0.68421053) *
-              85) freq_12mo< 1.5 10   2 no (0.20000000 0.80000000) *
-            43) email_clicks_30d< 1.5 18   3 no (0.16666667 0.83333333) *
-        11) cart_adds_30d< 2.5 328  90 no (0.27439024 0.72560976)  
-          22) freq_12mo>=2.5 196  70 no (0.35714286 0.64285714)  
-            44) recency_days< 55.5 103  50 no (0.48543689 0.51456311)  
-              88) site_visits_30d>=2.5 77  33 yes (0.57142857 0.42857143)  
-               176) avg_order_amt>=62.905 68  26 yes (0.61764706 0.38235294)  
-                 352) recency_days>=51.5 7   0 yes (1.00000000 0.00000000) *
-                 353) recency_days< 51.5 61  26 yes (0.57377049 0.42622951)  
-                   706) avg_order_amt< 101.04 23   6 yes (0.73913043 0.26086957) *
-                   707) avg_order_amt>=101.04 38  18 no (0.47368421 0.52631579)  
-                    1414) loyalty_tier_3>=0.5 10   2 yes (0.80000000 0.20000000) *
-                    1415) loyalty_tier_3< 0.5 28  10 no (0.35714286 0.64285714) *
-               177) avg_order_amt< 62.905 9   2 no (0.22222222 0.77777778) *
-              89) site_visits_30d< 2.5 26   6 no (0.23076923 0.76923077) *
-            45) recency_days>=55.5 93  20 no (0.21505376 0.78494624)  
-              90) avg_order_amt>=153.235 20   9 no (0.45000000 0.55000000)  
-               180) avg_order_amt< 177.875 10   3 yes (0.70000000 0.30000000) *
-               181) avg_order_amt>=177.875 10   2 no (0.20000000 0.80000000) *
-              91) avg_order_amt< 153.235 73  11 no (0.15068493 0.84931507) *
-          23) freq_12mo< 2.5 132  20 no (0.15151515 0.84848485) *
-     3) cart_adds_30d< 1.5 2410 409 no (0.16970954 0.83029046)  
-       6) recency_days< 27.5 1079 276 no (0.25579240 0.74420760)  
-        12) freq_12mo>=3.5 394 164 no (0.41624365 0.58375635)  
-          24) cart_adds_30d>=0.5 170  77 yes (0.54705882 0.45294118)  
-            48) site_visits_30d>=4.5 30   6 yes (0.80000000 0.20000000) *
-            49) site_visits_30d< 4.5 140  69 no (0.49285714 0.50714286)  
-              98) age>=52.5 27   8 yes (0.70370370 0.29629630)  
-               196) income>=64764.5 16   2 yes (0.87500000 0.12500000) *
-               197) income< 64764.5 11   5 no (0.45454545 0.54545455) *
-              99) age< 52.5 113  50 no (0.44247788 0.55752212)  
-               198) site_visits_30d>=2.5 58  26 yes (0.55172414 0.44827586)  
-                 396) freq_12mo>=4.5 36  12 yes (0.66666667 0.33333333)  
-                   792) email_clicks_30d>=1.5 15   2 yes (0.86666667 0.13333333) *
+```{r}
+tree_fit |>
+  extract_fit_engine()
 ```
+
 
 #### Node 1: The Root Node (The Starting Point)
 
-``` texinfo
+``` r
 1) root 3199 764 no (0.23882463 0.76117537)
 ```
 
@@ -943,7 +848,7 @@ node), split, n, loss, yval, (yprob)
 
 #### Node 2: The First Branch (Child Node)
 
-```         
+```r         
 2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)
 ```
 
@@ -1052,6 +957,12 @@ To identify the primary behavioral patterns driving customer conversion, an `rpa
 
 ### Classification Tree Performance
 
+```{r test-set-log-transform}
+# Add log_avg_order_amt to your test set
+camp_test <- camp_test |>
+  mutate(log_avg_order_amt = log(avg_order_amt))
+```
+
 ```{r tree-metrics}
 tree_preds <- augment(tree_fit, new_data = camp_test)
 
@@ -1142,7 +1053,9 @@ $$\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
 
 At each node $m$, the algorithm searches across every available predictor $X_j$ and every possible split value $s$, selecting the pair $(X_j, s)$ that minimizes the combined RSS of the left child region ($R_1$) and right child region ($R_2$):
 
-$$\text{RSS}_{\text{split}} = \sum_{i \in R_1(j,s)} (y_i - \bar{y}_{R_1})^2 + \sum_{i \in R_2(j,s)} (y_i - \bar{y}_{R_2})^2$$
+$$
+\text{RSS}_{\text{split}} = \sum_{i \in R_1(j,s)} (y_i - \bar{y}_{R_1})^2 + \sum_{i \in R_2(j,s)} (y_i - \bar{y}_{R_2})^2
+$$
 
 ::: {.callout-note title="Key Architectural Property: Step Functions"}
 A regression tree does **not** fit a smooth, continuous line or curve through data like linear or polynomial regression does.
@@ -1173,7 +1086,9 @@ Instead of evaluating every possible subtree (which is computationally impossibl
 
 For a given $\alpha$, the algorithm minimizes the following objective function:
 
-$$\text{Cost Complexity} = \sum_{m=1}^{|T|} \text{RSS}_m + \alpha \cdot |T|$$
+$$
+\text{Cost Complexity} = \sum_{m=1}^{|T|} \text{RSS}_m + \alpha \cdot |T|
+$$
 
 Where:
 
@@ -1192,7 +1107,9 @@ Where:
 ::: {.callout-note title="Mathematical Intuition"}
 As $\alpha$ increases from 0, subtrees are pruned in a deterministic nested sequence:
 
-$$T_0 \supset T_1 \supset T_2 \supset \dots \supset T_{\text{root}}$$
+$$
+T_0 \supset T_1 \supset T_2 \supset \dots \supset T_{\text{root}}
+$$
 
 This guarantees that for every value of $\alpha$, there exists a unique optimal subtree to evaluate.
 :::
@@ -1203,8 +1120,18 @@ This guarantees that for every value of $\alpha$, there exists a unique optimal 
 
 Because $\alpha$ is a hyperparameter, its optimal value cannot be determined from training data alone. We use $K$-Fold Cross-Validation:
 
-Full Dataset ──► \[Grow Large Tree T₀\] ──► \[Generate Sequence of Subtrees\] │ 10-Fold CV ──► \[Compute CV-RMSE for each α\] ◄─────────┘ │ ▼ \[Select Best α / Cₚ\]
-
+```mermaid
+flowchart TD
+    A[Full Dataset] --> B[Grow a Large<br>Regression Tree T₀]
+    B --> C[Generate Pruned Subtrees<br>for Different Cₚ Values]
+    C --> D[10-Fold<br>Cross-Validation]
+    D --> E[Compare Cross-Validated<br>Error: xerror]
+    E --> F{Selection Rule}
+    F --> G[Minimum-Error Tree]
+    F --> H[1-SE Tree:<br>Simpler Tree Within 1 SE]
+    G --> I[Prune T₀]
+    H --> I
+```
 1.  **Cross-Validation Split:** Divide the training data into $K$ folds (e.g., $K = 10$).
 2.  **Evaluate Subtrees:** For each candidate value of $\alpha$, fit the pruned tree on $K-1$ folds and compute the Cross-Validated Root Mean Squared Error ($\text{RMSE}_{\text{CV}}$) on the validation fold.
 3.  **Pick** $\alpha$: Choose either:
@@ -1290,8 +1217,8 @@ folds <- vfold_cv(camp_train, v = 10)
 
 # 4. Define Grid of Candidate Alpha (Cp) Values
 cp_grid <- grid_regular(
-  cost_complexity(range = c(-5, -2)), # Evaluates 10^-4 to 10^-1
-  levels = 20
+  cost_complexity(range = c(-4, -1)), # Evaluates 10^-4 to 10^-1
+  levels = 20 # 20 candidate values of Cp (alpha) to evaluate
 )
 
 # 5. Execute 10-Fold Cross-Validation
@@ -1300,7 +1227,7 @@ tune_results <- tune_grid(
   resamples = folds,
   grid = cp_grid,
   metrics = metric_set(rmse, rsq, mae),
-  control = control_grid(verbose = FALSE, allow_par = TRUE) # optional
+  control = control_grid(verbose = FALSE, allow_par = TRUE) # allow parallel processing
 )
 
 # 6. Plot the Pruning / Tuning Curve
@@ -1312,7 +1239,10 @@ autoplot(tune_results) +
   )
 ```
 
-::: {.callout-note title="Teaching Moment for Codebook"}
+::: {.callout-note title="Warning in Console Output"}
+```
+- Warning(s) x10: A correlation computation is required, but `estimate` is constant and has 0 standard dev...
+```
 When cost_complexity is set too high, `rpart` prunes the tree down to a single root node that predicts a constant mean ($\bar{y}$). As a result, $R^2$ cannot compute a standard deviation and returns NA for extreme $C_p$ values.
 :::
 
@@ -1329,7 +1259,7 @@ best_cp_1se <- select_by_one_std_err(
   desc(cost_complexity) # prefer larger cp (simpler tree)
 )
 
-best_cp <- select_best(tune_results, metric = "rmse")
+select_best(tune_results, metric = "rmse")
 
 cat("Chosen Cost-Complexity (Cp):", best_cp_1se$cost_complexity, "\n")
 
@@ -1364,7 +1294,7 @@ baseline_tree_metrics |>
 ```
 
 ::: {.callout-warning title="Why Did the 'Tuned' Model Have Worse Test Metrics?"}
-Looking at the test set metrics, the baseline manual tree ($RMSE = 49.1$) appears to outperform the CV-tuned tree ($RMSE = 51.4$). Why did automated tuning give us a "worse" result?
+Looking at the test set metrics, the baseline manual tree ($RMSE = 50.1$) appears to outperform the CV-tuned tree ($RMSE = 52.1$). Why did automated tuning give us a "worse" result?
 
 1.  **Sampling Variation in the Test Set:** Cross-validation estimates performance across 10 different folds of the training data. The holdout test set is a single sample. By chance, the manual model's extra complexity happened to fit the test set's specific data points better.
 
@@ -1373,17 +1303,167 @@ Looking at the test set metrics, the baseline manual tree ($RMSE = 49.1$) appear
 3.  **Manual Guesses Can Be Lucky:** A manually chosen $C_p = 0.001$ happened to work well here, but without cross-validation, we would have no principled way of knowing whether that guess was safe or severely overfitted.
 :::
 
+### Visualizing the Final Tuned / Pruned Regression Tree
+
 ```{r}
 # Visualize the Tuned / Pruned Tree
 final_tree_fit |>
   extract_fit_engine() |>
   rpart.plot(
-    type = 4,
-    extra = 1,
+    type = 4, #split condition is shown beside each branch
+    extra = 1, #displays the number of observations in the node
     main = "Regression Tree — Average Order Amount (CV Tuned)",
     box.palette = "Blues"
   )
 ```
+
+### Terminal Node Predictions on the Original Scale
+
+```{r}
+final_tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot::rpart.rules(cover = TRUE, style = "tall", roundint = FALSE)
+```
+
+#### Core Business Insights
+
+-   A. Loyalty & Device Are the Primary Spend Drivers
+
+  -   The Desktop Premium: Across every loyalty tier and channel combination, Desktop users consistently spend 20% to 22% more per order than Mobile/Tablet users in the same tier.
+
+  -   Loyalty Value: Gold/Platinum/New members generate significantly higher basket sizes (reaching an average order value of $134.29 on desktop vs. $73.70 for lower-tier mobile ad traffic).
+
+-   B. Direct & Email Drive Higher Order Values Than Paid Ads
+
+  -   Across both mobile and desktop users, traffic arriving via Direct or Email channels yields $15 to $20 higher AOV than traffic coming from Display, Paid Search, or Social Ads.
+
+  -   Paid advertising channels attract higher-friction, lower-ticket purchases, whereas owned/direct channels bring in higher-basket buyers.
+
+#### Recommendations
+
+1. Optimize Mobile Checkout for Cross-Selling:
+
+  Mobile users make up 64% of total cover across these rules but consistently average lower spending ($73.70 – $109.95). Adding mobile-optimized cart recommendations or threshold-based free shipping prompts (e.g., "Add $15 more for free shipping") can help bridge the gap to desktop spending levels.
+
+2. Reallocate Paid Ad Budgets:
+
+  Display, Paid Search, and Social ads bring in the lowest-spending segment (25% of customers averaging $73.70 per order). Focus ad campaigns on promoting bundles or higher-margin items to boost entry-level basket size.
+
+3. Protect the High-Value VIP Segment:
+
+  Desktop Gold/Platinum customers (8% of data) are your highest-value buyers at $134.29 AOV. Ensure marketing automation flows prioritize retaining this segment without relying on heavy margin-eroding discounts.
+
+### SHAP Extraction in Regression Trees
+
+#### SHAP Values (Shapley Additive exPlanations) 
+
+**SHAP (SHapley Additive exPlanations)** is the industry-standard method for explaining the predictions of machine learning models. Grounded in cooperative game theory (specifically Shapley values, developed by Nobel laureate Lloyd Shapley), SHAP calculates how much each feature contributed to pushing a model's prediction higher or lower compared to the baseline average prediction.
+
+-  Key Strengths:
+
+  -  Dual Capability: It works at both the global level (overall feature importance across the whole dataset) and the local level (explaining why the model made a specific prediction for Customer #1042).
+
+  -  Interaction Detection: It captures non-linear interactions between variables seamlessly (e.g., how the effect of income changes depending on device).
+
+-  Go-To R Packages: fastshap, kernelshap, treeshap, or DALEX.
+
+```{r}
+#install.packages("kernelshap")
+#install.packages("shapviz")
+library(kernelshap)
+library(shapviz)
+
+# 1. Isolate predictor data (dropping outcome, ID, and unused variables)
+X_train <- camp_train |>
+  select(-customer_id, -purchased, -avg_order_amt)
+
+# 2. Extract the parsnip model fit from your workflow
+fitted_model <- extract_fit_parsnip(final_tree_fit)
+
+# 3. Calculate SHAP values (using a representative sample, e.g., 200–500 rows for speed)
+bg_data <- X_train |> slice_sample(n = 100) # Background reference dataset
+eval_data <- X_train |> slice_sample(n = 300) # Data rows to explain
+
+shap_res <- kernelshap(
+  object = fitted_model,
+  X = eval_data,
+  bg_X = bg_data
+)
+
+# 4. Convert to a shapviz object for plotting
+shp <- shapviz(shap_res)
+
+
+# Combined Summary Beeswarm Plot
+sv_importance(shp, kind = "beeswarm")
+
+# Waterfall plot for row 1
+sv_waterfall(shp, row_id = 1)
+```
+
+
+```
+> final_tree_fit |>
++   extract_fit_engine()
+n=3053 (146 observations deleted due to missingness)
+
+node), split, n, deviance, yval
+      * denotes terminal node
+
+  1) root 3053 616.7939000 4.552768  
+    2) device_desktop< 0.5 1964 363.0003000 4.455060  
+      4) channel_email< 0.5 1282 227.7401000 4.392606  
+        8) channel_direct< 0.5 1015 179.1327000 4.350494  
+    3) device_desktop>=0.5 1089 201.2281000 4.728983  
+```
+
+#### How to Interpret the Final Regression Tree
+
+-   For every node, rpart reports the `node number`, `splitting rule`, `number of observations`, `deviance`, and `fitted value`.
+
+-   * denotes terminal node
+
+-   The columns mean:
+
+  -   **node**: the node’s identification number
+  -   split: the rule defining which observations enter that node
+  -   n: the number of observations in that node
+  -   **deviance**: the remaining within-node variation in the outcome
+  -   **yval**: the node’s predicted outcome value ($\hat{y}$), which is the average of all observations in that node.
+
+- Node 1
+
+  ```
+  1) root 3053 616.7939000 4.552768  
+  ```
+  -   **Node 1**: The root node contains all 3,053 observations in the training set. 
+  -   The average predicted value for `log(avg_order_amt)` is $4.55$ (on the log scale: exp(4.55) = $94.63$). 
+  -   The deviance of $616.79$ indicates the total variation in the outcome variable at this node.
+
+::: callout-tip
+-   The regression tree was fitted after applying a natural-log transformation to `avg_order_amt`. Therefore, the yval displayed at each node is a prediction of `log(avg_order_amt)`, not a dollar amount. 
+-   To express a terminal-node prediction on the original scale, apply the exponential function. For example, a terminal-node value of 4.214 corresponds to approximately `exp(4.214) = $67.62`.
+
+-   To make a prediction, begin at the root and follow the split conditions until reaching a node marked with an asterisk. 
+-   Because categorical predictors were converted to one-hot dummy variables, conditions such as `device_desktop < 0.5` mean “not desktop,” while `device_desktop >= 0.5` means “desktop.” 
+-   For integer count variables, a condition such as `cart_adds_30d < 1.5` means zero or one cart addition.
+:::
+
+#### Executive Interpretation of the Final Regression Tree
+
+> **Tasks**: Identify three meaningful customer segments from the final regression tree. For each segment, describe the decision path, convert the terminal-node prediction to the original dollar scale, explain the possible business meaning, and recommend one practical action. Also note any limitations related to sample size, causality, or model uncertainty.
+
+-   **Device is the first and most important segmentation variable**. Desktop users generally have higher predicted order amounts than non-desktop users.
+
+-   **Email appears valuable in several branches.** For example, higher-income non-desktop email users with at least two cart additions have relatively high predicted order amounts.
+
+-   **Recent cart activity is a strong buying-intent signal.** Customers with at least two cart additions often receive higher predictions than otherwise similar customers with zero or one.
+
+-   **Loyalty status helps distinguish high-value segments.** Tier 4 customers tend to have higher predicted outcomes in the non-desktop email branch.
+
+-   **Some segments are small and should be treated cautiously.** The social-channel branch with fewer than two annual purchases contains only nine observations, so that result may be unstable.
+
+
 
 ------------------------------------------------------------------------
 
@@ -2145,6 +2225,43 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Gradient Boosting** | Sequential (Residuals) | Shallow | Learning rate, early stopping | Low bias; adapts to hard cases |
 | **XGBoost** | Sequential (Gradients + Hessians) | Shallow / Medium | $L_1$/$L_2$ regularization, $\gamma$ pruning, subsampling | Peak predictive power; blazing speed on huge datasets |
 
+
+## XGBoost Recipe
+
+### XGBoost Classification Recipe (purchased)
+
+```{r boost-class-recipe}
+# XGBoost requires dummy variables!
+boost_class_rec <- recipe(purchased ~ ., data = camp_train) |>
+  update_role(customer_id, new_role = "ID") |>
+  update_role(log_avg_order_amt, new_role = "unused") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
+  step_zv(all_predictors()) |>
+  step_rm(has_role("unused")) # Clean out extra columns
+
+boost_class_rec |> prep() |> juice() |> glimpse()
+```
+
+### XGBoost Regression Recipe (log_avg_order_amt)
+
+```{r}
+boost_reg_rec <- recipe(log_avg_order_amt ~ ., data = camp_train) |>
+  update_role(customer_id, new_role = "ID") |>
+  update_role(purchased, new_role = "unused") |> # Exclude classification outcome
+  update_role(avg_order_amt, new_role = "unused") |> # Exclude raw dollar outcome
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # MANDATORY for XGBoost
+  step_zv(all_predictors()) |>
+  step_rm(has_role("unused")) # Purge unused columns for C++ engine
+
+boost_reg_rec |> prep() |> juice() |> glimpse()
+```
+
 ## Fitting XGBoost
 
 ```{r boost-fit}
@@ -2158,7 +2275,7 @@ boost_spec <- boost_tree(
   set_mode("classification")
 
 boost_wf <- workflow() |>
-  add_recipe(class_rec) |>
+  add_recipe(boost_class_rec) |>
   add_model(boost_spec)
 
 # Small grid for demonstration
@@ -2217,7 +2334,7 @@ fit_boost_lr <- function(lr) {
     set_engine("xgboost") |>
     set_mode("classification")
 
-  wf <- workflow() |> add_recipe(class_rec) |> add_model(spec)
+  wf <- workflow() |> add_recipe(boost_class_rec) |> add_model(spec)
   fit_obj <- fit(wf, data = camp_train)
 
   bind_rows(
