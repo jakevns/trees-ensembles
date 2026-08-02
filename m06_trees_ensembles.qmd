@@ -1678,9 +1678,9 @@ By forcing trees to ignore dominant predictors at many nodes, feature randomness
 
 Because each bootstrap sample selects approximately $63.2\%$ of unique observations, the remaining $\sim 36.8\%$ of data points are left out for that specific tree. These are called **Out-of-Bag (OOB)** observations.
 
-```
-Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree b 
-                └──► \[ Out-of-Bag (OOB) (\~36.8%) \] ──► Validate Tree b
+```r
+Full Dataset (N) ──► [ Bootstrap Sample (~63.2%) ] ──► Train Tree b 
+                └──► [ Out-of-Bag (OOB) (~36.8%) ] ──► Validate Tree b
 ```
 
 -   For each observation $i$, we can predict its value using **only the trees where observation** $i$ was OOB.
@@ -1696,14 +1696,16 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 | $B$ | Number of trees | `trees` | $500$ | More is generally better (does not overfit); set high enough for error to stabilize (e.g., $500–1000$). |
 | $n_{\text{min}}$ | Min node size for split | `min_n` | $1$ (Class) / $5$ (Reg) | Controls tree depth/growth stopping. Lower values $\to$ deeper trees. |
 
-------------------------------------------------------------------------
 
 ### Feature Importance: Peeking Inside the "Black Box"
 
 While individual decision trees produce simple flowchart diagrams, Random Forests aggregate hundreds of trees, sacrificing direct diagram visualizability. To restore interpretability, we measure **Variable Importance**:
 
 1.  **Mean Decrease in Impurity (MDI / Gini Importance):** Sums the total reduction in Gini impurity (or RSS) brought about by splits on feature $X_j$, averaged across all trees.
+
 2.  **Permutation Importance (OOB Drop):** Randomly shuffles (scrambles) feature $X_j$ in the OOB data and measures how much predictive accuracy degrades. Larger drops in accuracy indicate higher feature importance.
+
+We can also use SHAP Values (Shapley Additive exPlanations) to quantify each feature's contribution to individual predictions; A brief introduction to SHAP is provided towards the end of the codebook (@sec-explaining-models).
 
 ## Random Forest with 10 Fold CV
 
@@ -1738,13 +1740,13 @@ set.seed(2025)
 rf_grid <- grid_regular(
   mtry(range = c(3, 10)),
   min_n(range = c(5, 30)),
-  levels = 3
+  levels = 3 #3 evenly spaced values for the two hyperparameters, leading to 3 x 3 = 9 total combinations
 )
 
 # 5. Tune Grid
 rf_tune_results <- tune_grid(
   rf_wf,
-  resamples = camp_folds,
+  resamples = camp_folds, # 10-fold CV x 9 hyperparameter combinations = 90 total tree models
   grid = rf_grid,
   metrics = metric_set(roc_auc, accuracy)
 )
@@ -1793,9 +1795,11 @@ rf_tune_results |>
 ```
 
 ::: {.callout-note title="Interpreting mtry"}
-A small `mtry` forces each tree to consider fewer predictors — trees become more diverse (less correlated) but individually weaker. A large `mtry` approaches bagging (all predictors available at each split) — trees are stronger individually but more correlated with each other.
+-   A small `mtry` forces each tree to consider fewer predictors — trees become more diverse (less correlated) but individually weaker. 
 
-The optimal `mtry` balances individual tree quality against ensemble diversity. With \~15 predictors in this dataset, `mtry` values between 3 and 8 typically work best.
+-   A large `mtry` approaches *bagging* (all predictors available at each split) — trees are stronger individually but more correlated with each other.
+
+The optimal `mtry` balances individual tree quality against ensemble diversity. With \~15 predictors in this dataset, `mtry` values between **3 and 8** typically work best.
 :::
 
 ### Out-of-Bag (OOB) Error
@@ -1818,9 +1822,13 @@ rf_tune_results |>
 ```
 
 ::: {.callout-note title="What is OOB error?"}
-Each bootstrap sample in a random forest leaves out approximately **37% of the training observations** (observations not selected in that particular sample). These *out-of-bag* observations can be used to evaluate each tree without a separate validation set — the OOB error is essentially a free cross-validation estimate computed during training.
+-   Each bootstrap sample in a random forest leaves out approximately **37% of the training observations** (observations not selected in that particular sample). 
 
-OOB error tends to be slightly pessimistic compared to CV (because each tree only uses \~63% of the data) but is remarkably accurate and much faster to compute. For large forests and large datasets, OOB can replace CV entirely.
+-   These *out-of-bag* observations can be used to evaluate each tree without a separate validation set — the OOB error is essentially a free cross-validation estimate computed during training.
+
+-   OOB error tends to be slightly pessimistic compared to CV (because each tree only uses \~63% of the data) but is remarkably accurate and much faster to compute. 
+
+  -  ** For large forests and large datasets, OOB can replace CV entirely**.
 :::
 
 ### Variable Importance
@@ -1846,15 +1854,19 @@ The `ranger` engine supports two importance measures:
 
 **Permutation importance** (what we use here): for each variable, randomly shuffle its values across all test observations and measure how much prediction accuracy drops. A variable that is truly important will cause a large accuracy drop when shuffled; a noise variable will cause little change. This is more reliable but slower to compute.
 
-We use `importance = "permutation"` in the engine call for this reason — it gives a fairer comparison across predictors with different scales and cardinalities.
+-   We use `importance = "permutation"` in the engine call for this reason — it gives a fairer comparison across predictors with different scales and cardinalities.
 :::
+
+**Interpretation of Variable Importance**: The variable importance plot shows which features are most influential in the Random Forest's predictions. The higher the importance score, the more critical that feature is for accurate predictions.
+
+-   For example, knowing `cart_adds_30` is the #1 most important feature tells us it strongly impacts predictions, but it doesn't show whether Gold status increases or decreases the likelihood of purchase. Pair this with **SHAP** or **partial dependence plots** to explain the direction of the effect.
 
 ### Model Comparison: Single Tree vs. Random Forest on Prediction Performance
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Improvement |
 |------------------|------------------|-------------------|------------------|
-| **Accuracy** | 0.774 | **0.808** | +4.4% |
-| **ROC AUC** | 0.761 | **0.805** | +5.8% |
+| **Accuracy** | 0.774 | **0.805** | +4.4% |
+| **ROC AUC** | 0.761 | **0.799** | +5.8% |
 
 ::: {.callout-tip title="Why Random Forest is Superior?"}
 By combining 500 decorrelated trees via **bagging** and **feature randomness (`mtry`)**, the Random Forest successfully reduced model variance, yielding a significantly higher ROC AUC on holdout test data compared to any individual decision tree.
@@ -1867,7 +1879,11 @@ By combining 500 decorrelated trees via **bagging** and **feature randomness (`m
 -   **Alternative?** For massive datasets where running 10-Fold CV across a hyperparameter grid takes hours (or days), you can skip $K$-fold CV entirely. You can evaluate candidate models using their built-in **OOB Error**, which requires fitting each candidate forest **only once** instead of 10 times!
 
 ::: {.callout-tip title="Summary"}
-In the previous code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
+-   In the previous code, 10-Fold CV was used to search for the best combinations of `mtry` and `min_n` (3 x 3 = 9), leading to 90 forests. 
+
+-   On the other hand, **OOB error** was calculated inside the single winning forest as a fast, built-in validation check. 
+
+-   Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
 ## Random Forest with OBB Tuning
@@ -1900,24 +1916,23 @@ In `tidymodels`, the cleanest way to do OOB tuning is to pass `apparent()` as yo
 
 When using `apparent()`, `tidymodels` fits each grid setting on the full training set once. Because `ranger` calculates OOB metrics during that fit, `tidymodels` extracts the OOB score directly:
 
-```{{r}}
-#| eval=false
+```{r rf-oob-tune}
 
 # Function to evaluate OOB error for a single grid row
 eval_oob <- function(mtry_val, min_n_val) {
   spec <- rand_forest(trees = 500, mtry = mtry_val, min_n = min_n_val) |>
     set_engine("ranger", oob.error = TRUE) |>
     set_mode("classification")
-  
+
   wf <- workflow() |>
     add_recipe(class_rec) |>
     add_model(spec)
-  
+
   fitted_wf <- fit(wf, data = camp_train)
-  
+
   # Extract the ranger engine object and its OOB prediction error
   ranger_obj <- extract_fit_engine(fitted_wf)
-  
+
   tibble(
     mtry = mtry_val,
     min_n = min_n_val,
@@ -1978,8 +1993,8 @@ rf_default_preds |>
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
 |------------------|------------------|------------------|-------------------|
-| **Accuracy** | 0.774 | **0.808** | 0.806 |
-| **ROC AUC** | 0.761 | **0.805** | 0.802 |
+| **Accuracy** | 0.774 | **0.805** | 0.804 |
+| **ROC AUC** | 0.761 | **0.799** | 0.794 |
 
 ::: {.callout-tip title="Takeaway for Class"}
 Compared with using time-consuming 10 Fold CV-tuned method, the default method reached similar performance faster.
@@ -2043,12 +2058,25 @@ While Random Forests build hundreds of deep, independent trees in **parallel** (
 5.  **Combine Predictions:** The final prediction is a **weighted vote** of all stumps. Stumps with lower overall error rates get a stronger vote in the final decision.
 
 ```         
-[ Stump 1 ] ──► Misclassified rows weighted UP ──► [ Stump 2 ] ──► Misclassified rows weighted UP ──► [ Stump 3 ] ...
+[ Stump 1 ] ──► Misclassified rows weighted UP ──► 
+[ Stump 2 ] ──► Misclassified rows weighted UP ──► 
+[ Stump 3 ] ...
 ```
 
 ## Is AdaBoost "Better" Than Random Forest?
 
 Short answer: Neither is strictly "better"—they trade off bias and variance differently.
+
+### AdaBoost vs. Random Forest
+
+| Comparison area | AdaBoost advantage | Random Forest advantage |
+|---|---|---|
+| Bias and decision boundaries | AdaBoost can achieve lower bias because each new tree focuses on the errors made by earlier trees. This allows it to capture complex, nonlinear decision boundaries that a Random Forest may smooth over. | Random Forest may produce smoother, more stable decision boundaries because it averages predictions across many independently trained trees. |
+| Model parsimony | AdaBoost can sometimes reach high predictive accuracy with fewer total splits by combining many simple learners, such as decision stumps. | Random Forest usually relies on many deeper trees, so the overall model is less parsimonious even though each tree is trained independently. |
+| Sensitivity to noise and outliers | AdaBoost can be highly sensitive to mislabeled observations and outliers because it repeatedly increases the weight of cases that are misclassified. The model may overfocus on noisy observations and overfit. | Random Forest is generally more robust to noise and outliers because no single observation receives progressively increasing influence across the entire ensemble. |
+| Training process | AdaBoost trains trees sequentially. Each tree depends on the errors made by the previous trees. | Random Forest trees are independent and can be trained simultaneously across multiple CPU cores. |
+| Parallelization | Limited, because the next learner cannot be trained until the previous learner has finished. | Strong, because hundreds of trees can be fitted in parallel. |
+| Practical performance | AdaBoost may outperform Random Forest when the data are relatively clean and the signal is complex. | Random Forest often performs more reliably when the data contain noise, outliers, or mislabeled observations. |
 
 ### Why AdaBoost Can Beat Random Forest
 
@@ -2579,7 +2607,7 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
   theme_minimal(base_size = 12)
 ```
 
-## Explaining Models
+## Explaining Models{#sec-explaining-models}
 
 ### Partial Dependence Plots (PDP) and SHAP Values
 
