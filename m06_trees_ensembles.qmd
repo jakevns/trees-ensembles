@@ -35,7 +35,7 @@ By the end of this notebook you will be able to:
 5.  Apply `step_unknown()` and `one_hot = TRUE` in a tree-appropriate recipe
 6.  Compare all three methods against a Lasso logistic regression baseline using cross-validated metrics
 
-> **Textbook references:** ISLR Chapter 8 (*Tree-Based Methods* — conceptual depth on trees, bagging, random forests, boosting); TMWR Chapter 12 (*Model Tuning and the Dangers of Overfitting* — tuning workflow applied to tree hyperparameters)
+> **Textbook references:** ISLR Chapter 8 (*Tree-Based Methods* — conceptual depth on trees, bagging, random forests, boosting); TMWR Chapter 12 (*Model Tuning and the Dangers of Overfitting* — tuning workflow applied to tree hyperparameters); TMWR Chapter 13 (*Ensemble Learning* — bagging, random forests, boosting); TMWR Chapter 18 (*Variable Importance and Partial Dependence Plots* — interpretation of tree-based models).
 
 ------------------------------------------------------------------------
 
@@ -458,7 +458,6 @@ $$
 `purchased` reflects a realistic digital marketing conversion funnel with **four layers of signal**:
 
 ::: {.callout-note title="What drives purchase probability"}
-
 **Behavioral engagement (strongest signals)**
 
 -   `cart_adds_30d` — customers who add items to their cart are most likely to convert; this is the single strongest predictor
@@ -486,7 +485,6 @@ $$
 -   High site visits AND email clicks → disproportionate engagement effect
 -   Recently active AND frequent buyers → amplified recency × frequency boost
 -   Email channel AND multiple email clicks → channel × engagement amplification
-
 :::
 
 ```{r response-rate}
@@ -578,6 +576,8 @@ p3 + p4
 ```
 
 ------------------------------------------------------------------------
+
+# Part 1: Trees {.unnumbered style="font-size: 28pt; font-weight: bold; color: #f1861b;"}
 
 # **Train/Test Splits, Recipes, CV Folds**
 
@@ -721,7 +721,9 @@ A decision tree recursively splits the training data into regions by asking a se
 
 Splits are selected to minimize the **Gini Impurity** ($G$) across the child nodes:
 
-$$G = 1 - \sum_{k=1}^{K} \hat{p}_{mk}^2$$
+$$
+G = 1 - \sum_{k=1}^{K} \hat{p}_{mk}^2
+$$
 
 Where $\hat{p}_{mk}$ is the proportion of training observations in node $m$ belonging to class $k$.
 
@@ -735,7 +737,9 @@ Where $\hat{p}_{mk}$ is the proportion of training observations in node $m$ belo
 
 For continuous outcomes, splits are selected to minimize the **Residual Sum of Squares (RSS)**:
 
-$$\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
+$$
+\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2
+$$
 
 Where $\bar{y}_{R_m}$ is the average response value of training points in region $R_m$.
 
@@ -1039,7 +1043,9 @@ While classification trees predict discrete categorical outcomes (e.g., `"yes"` 
 
 Instead of assigning a majority class label at a leaf node, a regression tree calculates the **average target value (**$\bar{y}$) of all training observations that fall into that specific terminal region:
 
-$$\hat{y}_{R_m} = \bar{y}_{R_m} = \frac{1}{n_m} \sum_{i \in R_m} y_i$$
+$$
+\hat{y}_{R_m} = \bar{y}_{R_m} = \frac{1}{n_m} \sum_{i \in R_m} y_i
+$$
 
 Where $n_m$ is the number of observations in leaf node region $R_m$.
 
@@ -1049,7 +1055,9 @@ Where $n_m$ is the number of observations in leaf node region $R_m$.
 
 Regression trees recursively partition the feature space by choosing splits that cause the largest reduction in **Residual Sum of Squares (RSS)**:
 
-$$\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
+$$
+\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2
+$$
 
 At each node $m$, the algorithm searches across every available predictor $X_j$ and every possible split value $s$, selecting the pair $(X_j, s)$ that minimizes the combined RSS of the left child region ($R_1$) and right child region ($R_2$):
 
@@ -1331,22 +1339,6 @@ final_tree_fit |>
   extract_fit_engine()
 ```
 
-
-```
-> final_tree_fit |>
-+   extract_fit_engine()
-n=3053 (146 observations deleted due to missingness)
-
-node), split, n, deviance, yval
-      * denotes terminal node
-
-  1) root 3053 616.7939000 4.552768  
-    2) device_desktop< 0.5 1964 363.0003000 4.455060  
-      4) channel_email< 0.5 1282 227.7401000 4.392606  
-        8) channel_direct< 0.5 1015 179.1327000 4.350494  
-    3) device_desktop>=0.5 1089 201.2281000 4.728983  
-```
-
 #### How to Interpret the Final Regression Tree
 
 -   For every node, rpart reports the `node number`, `splitting rule`, `number of observations`, `deviance`, and `fitted value`.
@@ -1563,6 +1555,8 @@ The terminal-node coverage percentages add to approximately 99% rather than exac
 
 ------------------------------------------------------------------------
 
+# Part 2: Ensembles {.unnumbered style="font-size: 28pt; font-weight: bold; color: #f1861b;"}
+
 # **Random Forests**
 
 ## Conceptual Overview
@@ -1639,7 +1633,9 @@ To overcome this instability, we turn to an ensemble method called **Bagging (Bo
 
 If we have $B$ independent and identically distributed (i.i.d.) random variables each with variance $\sigma^2$, the variance of their average is:
 
-$$\text{Var}\left(\frac{1}{B} \sum_{b=1}^B X_b\right) = \frac{\sigma^2}{B}$$
+$$
+\text{Var}\left(\frac{1}{B} \sum_{b=1}^B X_b\right) = \frac{\sigma^2}{B}
+$$
 
 -   $B$: The total number of trees in your ensemble (e.g., $B = 500$).
 
@@ -1653,7 +1649,9 @@ $$\text{Var}\left(\frac{1}{B} \sum_{b=1}^B X_b\right) = \frac{\sigma^2}{B}$$
 
 As $B$ grows large, variance approaches zero. However, because bagged trees are trained on overlapping bootstrap samples from the same dataset, they are **correlated** (with pair-wise correlation $\rho > 0$). The true variance of an ensemble average is:
 
-$$\text{Var}(\text{Ensemble}) = \rho \sigma^2 + \frac{1 - \rho}{B} \sigma^2$$
+$$
+\text{Var}(\text{Ensemble}) = \rho \sigma^2 + \frac{1 - \rho}{B} \sigma^2
+$$
 
 As $B \to \infty$, the second term drops to zero, but the first term ($\rho \sigma^2$) remains. **If trees are highly correlated (**$\rho$ is large), bagging offers limited variance reduction.
 
@@ -1680,7 +1678,10 @@ By forcing trees to ignore dominant predictors at many nodes, feature randomness
 
 Because each bootstrap sample selects approximately $63.2\%$ of unique observations, the remaining $\sim 36.8\%$ of data points are left out for that specific tree. These are called **Out-of-Bag (OOB)** observations.
 
-Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree b └──► \[ Out-of-Bag (OOB) (\~36.8%) \] ──► Validate Tree b
+```
+Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree b 
+                └──► \[ Out-of-Bag (OOB) (\~36.8%) \] ──► Validate Tree b
+```
 
 -   For each observation $i$, we can predict its value using **only the trees where observation** $i$ was OOB.
 -   Averaging these predictions yields the **OOB Error Rate**, which serves as an unbiased estimate of test error **without needing** $K$-fold cross-validation or a separate validation split.
@@ -2583,19 +2584,24 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
 ### Partial Dependence Plots (PDP) and SHAP Values
 
 ```{r}
+#| eval: false
 # Setup: one explainer, used for both PDP and SHAP
-library("DALEXtra")
+#install.packages("DALEX")
+#install.packages("DALEXtra")
+library(DALEX)
 library(DALEXtra)
 library(shapviz)
 
-camp_train_baked <- class_rec |> prep() |>
-  bake(new_data = camp_train) |> select(-purchased)
+camp_train_baked <- boost_class_rec |>
+  prep() |>
+  bake(new_data = camp_train) |>
+  select(-purchased)
 
 explainer_boost <- explain_tidymodels(
-  model   = boost_fit,
-  data    = camp_train_baked,
-  y       = as.numeric(camp_train$purchased == "yes"),
-  label   = "XGBoost",
+  model = final_boost_fit,
+  data = camp_train_baked,
+  y = as.numeric(camp_train$purchased == "yes"),
+  label = "XGBoost",
   verbose = FALSE
 )
 ```
@@ -2603,6 +2609,7 @@ explainer_boost <- explain_tidymodels(
 ### Partial Dependence Plots (PDP) for Two Predictors
 
 ```{r}
+#| eval: false
 # PDP — cart_adds_30d
 model_profile(explainer_boost, variables = "cart_adds_30d", N = 500) |>
   plot()
@@ -2615,16 +2622,18 @@ model_profile(explainer_boost, variables = "discount_rate_seen", N = 500) |>
 ### SHAP beeswarm: 
 
 ```{r}
-xgb_model <- boost_fit |> extract_fit_engine()
-X_train   <- camp_train_baked |> as.matrix()
+#| eval: false
+xgb_model <- final_boost_fit |> extract_fit_engine()
+X_train <- camp_train_baked |> as.matrix()
 
-shap_obj  <- shapviz(xgb_model, X_pred = X_train)
+shap_obj <- shapviz(xgb_model, X_pred = X_train)
 sv_importance(shap_obj, kind = "beeswarm", max_display = 12)
 ```
 
 ## Model Comparison Summary
 
 ```{r compare-table}
+
 all_model_metrics |>
   select(model, .metric, .estimate) |>
   pivot_wider(names_from = .metric, values_from = .estimate) |>
