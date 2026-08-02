@@ -1,5 +1,5 @@
 ---
-title: "Module 6 — Trees and Ensembles - Part 1"
+title: "Module 6 — Trees and Ensembles - Part 1 & Part 2"
 subtitle: "Applied Machine Learning for Marketing"
 author: "Jae Jung"
 date: today
@@ -1120,7 +1120,7 @@ This guarantees that for every value of $\alpha$, there exists a unique optimal 
 
 Because $\alpha$ is a hyperparameter, its optimal value cannot be determined from training data alone. We use $K$-Fold Cross-Validation:
 
-```mermaid
+```{mermaid}
 flowchart TD
     A[Full Dataset] --> B[Grow a Large<br>Regression Tree T₀]
     B --> C[Generate Pruned Subtrees<br>for Different Cₚ Values]
@@ -1145,9 +1145,9 @@ flowchart TD
 ```{r reg-tree-fit}
 # 1. Fixed Model Specification
 reg_tree_spec <- decision_tree(
-  cost_complexity = 0.001, # = tune() for tuning alpha or Cp
-  tree_depth = 8,
-  min_n = 25
+  cost_complexity = 0.001, # typical range: 0.0001 to 0.1; fixed Cp; later replaced with tune()
+  tree_depth = 8, # typical range: 2 to 10
+  min_n = 25 # typical range: 10 to 100
 ) |>
   set_engine("rpart") |>
   set_mode("regression")
@@ -1168,8 +1168,6 @@ reg_tree_preds <- augment(reg_tree_fit, new_data = camp_test) |>
   )
 
 # Baseline Performance Metrics
-# Note: actual avg_order_amt in test set is on the original dollar scale
-# but the recipe log-transformed it during training —
 # we evaluate on the original scale for interpretability
 baseline_tree_metrics <- reg_tree_preds |>
   summarise(
@@ -1197,11 +1195,16 @@ reg_tree_fit |>
 Rather than guessing the best value for `cost_complexity` ($\alpha$ / $C_p$), we can mark it as `tune()` and use **10-Fold Cross-Validation** on the training set to find the optimal parameter value automatically.
 
 ```{r}
+camp_train |>
+  filter(is.na(log_avg_order_amt))
+```
+
+```{r}
 # 1. Model Specification with Tuneable Cost-Complexity
 tune_tree_spec <- decision_tree(
-  cost_complexity = tune(), # Mark cost_complexity for tuning
-  tree_depth = 8,
-  min_n = 25
+  cost_complexity = tune(), # tune Cp
+  tree_depth = 8, # held fixed for comparison
+  min_n = 25 # held fixed for comparison
 ) |>
   set_engine("rpart") |>
   set_mode("regression")
@@ -1227,7 +1230,7 @@ tune_results <- tune_grid(
   resamples = folds,
   grid = cp_grid,
   metrics = metric_set(rmse, rsq, mae),
-  control = control_grid(verbose = FALSE, allow_par = TRUE) # allow parallel processing
+  control = control_grid(verbose = FALSE, allow_par = TRUE) # allow parallel processing if a backend is registered
 )
 
 # 6. Plot the Pruning / Tuning Curve
@@ -1317,88 +1320,15 @@ final_tree_fit |>
   )
 ```
 
-### Terminal Node Predictions on the Original Scale
+### Printing out the Final Regression Tree and its Node Statistics
 
-```{r}
+-   The printout from below code chunk shows the final regression tree fit on the training data. It reports the number of observations in each node, the deviance (a measure of within-node variation), and the predicted value for `log(avg_order_amt)`.
+
+-   This print out should have the same informaton as the **visual tree diagram**, but it is often easier to read the exact numbers in this format.
+
+```{r regression-tree-fit-engine}
 final_tree_fit |>
-  extract_fit_engine() |>
-  rpart.plot::rpart.rules(cover = TRUE, style = "tall", roundint = FALSE)
-```
-
-#### Core Business Insights
-
--   A. Loyalty & Device Are the Primary Spend Drivers
-
-  -   The Desktop Premium: Across every loyalty tier and channel combination, Desktop users consistently spend 20% to 22% more per order than Mobile/Tablet users in the same tier.
-
-  -   Loyalty Value: Gold/Platinum/New members generate significantly higher basket sizes (reaching an average order value of $134.29 on desktop vs. $73.70 for lower-tier mobile ad traffic).
-
--   B. Direct & Email Drive Higher Order Values Than Paid Ads
-
-  -   Across both mobile and desktop users, traffic arriving via Direct or Email channels yields $15 to $20 higher AOV than traffic coming from Display, Paid Search, or Social Ads.
-
-  -   Paid advertising channels attract higher-friction, lower-ticket purchases, whereas owned/direct channels bring in higher-basket buyers.
-
-#### Recommendations
-
-1. Optimize Mobile Checkout for Cross-Selling:
-
-  Mobile users make up 64% of total cover across these rules but consistently average lower spending ($73.70 – $109.95). Adding mobile-optimized cart recommendations or threshold-based free shipping prompts (e.g., "Add $15 more for free shipping") can help bridge the gap to desktop spending levels.
-
-2. Reallocate Paid Ad Budgets:
-
-  Display, Paid Search, and Social ads bring in the lowest-spending segment (25% of customers averaging $73.70 per order). Focus ad campaigns on promoting bundles or higher-margin items to boost entry-level basket size.
-
-3. Protect the High-Value VIP Segment:
-
-  Desktop Gold/Platinum customers (8% of data) are your highest-value buyers at $134.29 AOV. Ensure marketing automation flows prioritize retaining this segment without relying on heavy margin-eroding discounts.
-
-### SHAP Extraction in Regression Trees
-
-#### SHAP Values (Shapley Additive exPlanations) 
-
-**SHAP (SHapley Additive exPlanations)** is the industry-standard method for explaining the predictions of machine learning models. Grounded in cooperative game theory (specifically Shapley values, developed by Nobel laureate Lloyd Shapley), SHAP calculates how much each feature contributed to pushing a model's prediction higher or lower compared to the baseline average prediction.
-
--  Key Strengths:
-
-  -  Dual Capability: It works at both the global level (overall feature importance across the whole dataset) and the local level (explaining why the model made a specific prediction for Customer #1042).
-
-  -  Interaction Detection: It captures non-linear interactions between variables seamlessly (e.g., how the effect of income changes depending on device).
-
--  Go-To R Packages: fastshap, kernelshap, treeshap, or DALEX.
-
-```{r}
-#install.packages("kernelshap")
-#install.packages("shapviz")
-library(kernelshap)
-library(shapviz)
-
-# 1. Isolate predictor data (dropping outcome, ID, and unused variables)
-X_train <- camp_train |>
-  select(-customer_id, -purchased, -avg_order_amt)
-
-# 2. Extract the parsnip model fit from your workflow
-fitted_model <- extract_fit_parsnip(final_tree_fit)
-
-# 3. Calculate SHAP values (using a representative sample, e.g., 200–500 rows for speed)
-bg_data <- X_train |> slice_sample(n = 100) # Background reference dataset
-eval_data <- X_train |> slice_sample(n = 300) # Data rows to explain
-
-shap_res <- kernelshap(
-  object = fitted_model,
-  X = eval_data,
-  bg_X = bg_data
-)
-
-# 4. Convert to a shapviz object for plotting
-shp <- shapviz(shap_res)
-
-
-# Combined Summary Beeswarm Plot
-sv_importance(shp, kind = "beeswarm")
-
-# Waterfall plot for row 1
-sv_waterfall(shp, row_id = 1)
+  extract_fit_engine()
 ```
 
 
@@ -1431,7 +1361,7 @@ node), split, n, deviance, yval
   -   **deviance**: the remaining within-node variation in the outcome
   -   **yval**: the node’s predicted outcome value ($\hat{y}$), which is the average of all observations in that node.
 
-- Node 1
+- **Node 1**
 
   ```
   1) root 3053 616.7939000 4.552768  
@@ -1449,6 +1379,160 @@ node), split, n, deviance, yval
 -   For integer count variables, a condition such as `cart_adds_30d < 1.5` means zero or one cart addition.
 :::
 
+### Terminal Nodes Statistics and Business Interpretation
+
+```{r regression-tree-rules}
+final_tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot::rpart.rules(cover = TRUE, style = "tall", roundint = FALSE)
+```
+
+The final regression tree identifies **device type**, **loyalty tier**, and **acquisition channel** as the primary variables defining customer segments with different predicted average order amounts.
+
+Because `avg_order_amt` was log-transformed before fitting the model, the terminal-node predictions are reported on the log scale. To return them approximately to the original dollar scale, apply the exponential function:
+
+$$
+\widehat{\text{Order Amount}} =\exp\left(\widehat{\log(\text{Order Amount})}\right)
+$$
+The approximate back-transformed predictions are:
+
+| Log-scale prediction | Approximate order amount |
+| -------------------: | -----------------------: |
+|                  4.3 |                      $74 |
+|                  4.5 |                      $90 |
+|                  4.7 |                     $110 |
+|                  4.9 |                     $134 |
+
+::: {.callout-note title="Interpreting the Back-Transformed Predictions"}
+Exponentiating a log-scale prediction returns an approximate typical order amount in dollars. Because of retransformation bias, it should not necessarily be interpreted as an unbiased estimate of the arithmetic mean order amount.
+:::
+
+#### 1. Desktop Customers Tend to Place Higher-Value Orders
+
+The clearest overall pattern is the difference between desktop customers and mobile or tablet customers.
+
+For Bronze and Silver loyalty members:
+
+-   Mobile or tablet users acquired through display, paid search, or social channels have a predicted order amount of approximately $74.
+
+-   Desktop users acquired through display or social channels have a predicted order amount of approximately $90.
+
+-   Desktop users acquired through direct, email, or paid search channels have a predicted order amount of approximately $110.
+
+The highest-value terminal node also consists of desktop users:
+
+> **Desktop customers whose loyalty status is Gold, Platinum, new, or unknown have a predicted order amount of approximately $134.**
+
+**Business implication**: Desktop shopping may be associated with more deliberate or higher-value purchases. The company should investigate whether mobile customers experience checkout friction, weaker product presentation, or fewer opportunities for cross-selling and product bundling.
+
+This finding is predictive rather than causal. It does not prove that moving a customer from mobile to desktop would increase spending. Device type may instead reflect purchase context, customer characteristics, or shopping intent.
+
+#### 2. Loyalty Status Is Strongly Associated with Customer Value
+
+Higher loyalty tiers are generally associated with larger predicted order amounts.
+
+Among mobile or tablet customers acquired through direct or email channels:
+
+-   Bronze or Silver customers have a predicted order amount of approximately $90.
+-   Gold, Platinum, new, or unknown customers have a predicted order amount of approximately $110.
+
+Among desktop customers, the Gold, Platinum, new, or unknown group forms the highest-value segment, with a predicted order amount of approximately $134.
+
+**Business implication**: Loyalty status appears useful for customer segmentation, personalization, and offer design. Higher-value loyalty segments may be appropriate targets for premium products, product bundles, early access, personalized recommendations, and retention campaigns.
+
+::: {.callout-warning title="Investigate the New and Unknown Categories"}
+The tree groups new and unknown loyalty statuses with Gold and Platinum customers. This does not necessarily mean that new or missing-tier customers behave like highly loyal customers in general. It means only that, within this branch of the tree, their observed order amounts were similar enough for the model to group them together.
+
+These categories should be investigated separately before designing a marketing campaign.
+:::
+
+#### 3. Direct and Email Channels Are Associated with Higher Order Values
+
+Direct and email traffic generally appears in higher-value terminal nodes than display or social traffic.
+
+For mobile or tablet Bronze and Silver customers:
+
+-   Display, paid search, or social channels correspond to approximately $74.
+-   Direct or email channels correspond to approximately $90.
+
+For desktop Bronze and Silver customers:
+
+-   Display or social channels correspond to approximately $90.
+-   Direct, email, or paid search channels correspond to approximately $110.
+
+**Business implication**: Direct and email channels may attract customers with stronger purchase intent or an existing relationship with the brand. Email campaigns could emphasize higher-value products, bundles, replenishment reminders, loyalty benefits, and personalized recommendations.
+
+This is also an associative finding. Direct traffic may represent customers who already know and trust the brand rather than proving that the direct channel itself causes higher spending.
+
+#### 4. The Largest Low-Value Segment Represents an Important Opportunity
+
+The largest terminal node covers approximately 25% of customers:
+
+> Mobile or tablet users who are Bronze or Silver loyalty members and were acquired through display, paid search, or social channels have a predicted order amount of approximately $74.
+
+This is both the largest customer segment and the segment with the lowest predicted order amount.
+
+**Business implication**: Because this segment contains approximately one-quarter of the observations, even a modest improvement in its average order value could produce a meaningful overall business impact.
+
+Possible actions include:
+
+-   improving mobile landing pages and checkout usability;
+-   offering product bundles or quantity discounts;
+-   using free-shipping thresholds to encourage larger baskets;
+-   aligning advertising creative with higher-value products;
+-   retargeting customers who demonstrate stronger engagement; and
+-   encouraging loyalty-program enrollment or progression.
+
+#### 5. High-Value Desktop Customers Are Smaller but Strategically Attractive
+
+The highest-value terminal node covers approximately 8% of customers:
+
+> **Desktop users whose loyalty status is Gold, Platinum, new, or unknown have a predicted order amount of approximately $134.**
+
+Although this segment is smaller than the broad mobile segments, its predicted order value is substantially higher.
+
+**Business implication**: This group may justify more personalized treatment, including premium merchandising, VIP communications, exclusive offers, early product access, and higher allowable acquisition or retention costs.
+
+#### 6. The Tree Reveals Interactions Rather Than Isolated Effects
+
+The results should not be summarized simply as:
+
+> Desktop is better.
+
+or:
+
+> Email is better.
+
+The predicted order amount depends on combinations of customer characteristics.
+
+For example, paid search appears in both:
+
+-   the lowest-value mobile or tablet Bronze and Silver segment; and
+-   the higher-value desktop Bronze and Silver segment.
+
+Therefore, the relationship between paid search and order value depends on device type and loyalty status.
+
+This is one of the main advantages of decision trees: they reveal conditional relationships and interactions that may be difficult to communicate through a single overall average or regression coefficient.
+
+#### Overall Business Interpretation
+
+> The regression tree identifies device type, loyalty tier, and acquisition channel as the primary dimensions of customer-value segmentation. Desktop customers generally have higher predicted order amounts than mobile or tablet customers, particularly among higher loyalty tiers. Direct and email traffic also tends to be associated with higher-value orders than display or social traffic.
+
+The largest business opportunity appears to be the mobile or tablet Bronze and Silver segment acquired through display, paid search, or social channels. This group represents approximately one-quarter of customers but has the lowest predicted order amount. The company should investigate improvements to the mobile shopping experience, loyalty development, channel-specific merchandising, and basket-building strategies.
+
+At the same time, the smaller high-value desktop segment may warrant premium retention and personalization efforts.
+
+::: {.callout-important title="Important Limitations"}
+These results describe predictive associations in the available data. They do not establish that device type, loyalty tier, or acquisition channel causes a change in average order amount.
+
+Small segments, data-quality issues, and omitted variables should also be considered before making major business decisions.
+:::
+
+::: {.callout-tip title="Reading the Coverage Percentages"}
+The terminal-node coverage percentages add to approximately 99% rather than exactly 100% because `rpart.rules()` rounds the displayed percentages.
+:::
+
+
 #### Executive Interpretation of the Final Regression Tree
 
 > **Tasks**: Identify three meaningful customer segments from the final regression tree. For each segment, describe the decision path, convert the terminal-node prediction to the original dollar scale, explain the possible business meaning, and recommend one practical action. Also note any limitations related to sample size, causality, or model uncertainty.
@@ -1462,8 +1546,6 @@ node), split, n, deviance, yval
 -   **Loyalty status helps distinguish high-value segments.** Tier 4 customers tend to have higher predicted outcomes in the non-desktop email branch.
 
 -   **Some segments are small and should be treated cautiously.** The social-channel branch with fewer than two annual purchases contains only nine observations, so that result may be unstable.
-
-
 
 ------------------------------------------------------------------------
 
@@ -2494,6 +2576,50 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
     color = NULL
   ) +
   theme_minimal(base_size = 12)
+```
+
+## Explaining Models
+
+### Partial Dependence Plots (PDP) and SHAP Values
+
+```{r}
+# Setup: one explainer, used for both PDP and SHAP
+library("DALEXtra")
+library(DALEXtra)
+library(shapviz)
+
+camp_train_baked <- class_rec |> prep() |>
+  bake(new_data = camp_train) |> select(-purchased)
+
+explainer_boost <- explain_tidymodels(
+  model   = boost_fit,
+  data    = camp_train_baked,
+  y       = as.numeric(camp_train$purchased == "yes"),
+  label   = "XGBoost",
+  verbose = FALSE
+)
+```
+
+### Partial Dependence Plots (PDP) for Two Predictors
+
+```{r}
+# PDP — cart_adds_30d
+model_profile(explainer_boost, variables = "cart_adds_30d", N = 500) |>
+  plot()
+
+# PDP — discount_rate_seen (reveals the nonlinear interaction)
+model_profile(explainer_boost, variables = "discount_rate_seen", N = 500) |>
+  plot()
+```
+
+### SHAP beeswarm: 
+
+```{r}
+xgb_model <- boost_fit |> extract_fit_engine()
+X_train   <- camp_train_baked |> as.matrix()
+
+shap_obj  <- shapviz(xgb_model, X_pred = X_train)
+sv_importance(shap_obj, kind = "beeswarm", max_display = 12)
 ```
 
 ## Model Comparison Summary
