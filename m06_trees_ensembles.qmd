@@ -1886,13 +1886,14 @@ By combining 500 decorrelated trees via **bagging** and **feature randomness (`m
 -   Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
-## Random Forest with OBB Tuning
+## Random Forest with OBB Error
 
+::: {.callout-tip title="Why OOB Tuning is Faster"}
 -   Instead of re-fitting each forest 10 times across 10 folds, you evaluate each candidate forest exactly ONCE on its own built-in Out-of-Bag (OOB) predictions.
 
 -   Because OOB estimation calculates out-of-sample error during training for free, you get 10x speedups (or more) while still finding optimal hyperparameters.
 
-```         
+```r         
 Standard 10-Fold CV Search:
 Grid Choice 1 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests fit)
 Grid Choice 2 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests fit)
@@ -1901,8 +1902,8 @@ Grid Choice 2 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests
 OOB Validation Search:
 Grid Choice 1 ──► [Fit 1 Forest on Full Train Data] ──► Extract OOB Error  (1 Forest fit)
 Grid Choice 2 ──► [Fit 1 Forest on Full Train Data] ──► Extract OOB Error  (1 Forest fit)
-...
 ```
+:::
 
 If you evaluate 20 grid settings:
 
@@ -1910,12 +1911,11 @@ If you evaluate 20 grid settings:
 
 -   **OOB Search:** Fits $20 \times 1 = \mathbf{20\text{ forests}}$ (**90% time reduction**).
 
-### Method 1: Using `apparent()` Resampling in `tidymodels`
+### Method 1: Using Custom Engine-Level OOB Evaluation Loop
 
-In `tidymodels`, the cleanest way to do OOB tuning is to pass `apparent()` as your resampling strategy inside `tune_grid()`.
+> To implement OOB tuning, we can create a custom loop that fits a Random Forest for each combination of hyperparameters in our grid and extracts the OOB error directly from the fitted model. This avoids the overhead of cross-validation and allows us to efficiently evaluate many hyperparameter combinations.
 
-When using `apparent()`, `tidymodels` fits each grid setting on the full training set once. Because `ranger` calculates OOB metrics during that fit, `tidymodels` extracts the OOB score directly:
-
+#### OBB Tuning Loop
 ```{r rf-oob-tune}
 
 # Function to evaluate OOB error for a single grid row
@@ -1947,11 +1947,65 @@ oob_results <- purrr::map2_dfr(rf_grid$mtry, rf_grid$min_n, eval_oob)
 oob_results |> arrange(oob_error)
 ```
 
+::: callout-tip
+#### Insights from the Custom OOB Loop
+
+-   **Parameter Alignment:** The lowest Out-of-Bag (OOB) error occurs at `mtry = 3` and `min_n = 17`.
+
+  -   Note that this is slightly different from the 10-Fold CV result (`mtry = 3`, `min_n = 30`), but the difference in OOB error is negligible.
+
+  -   Smaller mtry values (fewer features considered per split) reduce tree correlation, which is beneficial for ensemble performance.
+
+  -   Larger min_n values (larger minimum node size) prevent overfitting by limiting tree depth, which can improve generalization.
+
+-   **Sensitivity / Stability Across the Grid:** 
+  
+  -   The OOB Error rate across the 9 grid combinations are tightly clustered, ranging from 0.135 to 0.137, indicating that the model's performance is relatively stable across a range of hyperparameter settings.
+
+  -   **Practical Implication:** This suggests that Random Forests are robust to hyperparameter choices, and even if the exact optimal parameters are not chosen, the model will still perform well.
+
+-   **Computational Efficiency:** *OOB tuning* evaluated $9$ total models, whereas *10-fold CV* required $90$ fits. Both methods converged on similar parameter ranges, demonstrating that OOB error is an efficient, reliable proxy for model selection in tree ensembles.
+:::
+
+#### Finalizing the OOB-Tuned Model
+
+```{r}
+# Extract the parameter combination with the lowest OOB error
+best_oob_rf_params <- oob_results |>
+  slice_min(order_by = oob_error, n = 1)
+
+# Finalize your existing rf_wf with the best hyperparameter settings
+final_obb_rf_wf <- finalize_workflow(rf_wf, best_oob_rf_params)
+
+# Fit the finalized workflow on the entire training set (camp_train)
+final_obb_rf_fit <- fit(final_obb_rf_wf, data = camp_train)
+
+# Generate predictions on the unseen test set (camp_test)
+rf_obb_preds <- augment(final_obb_rf_fit, new_data = camp_test)
+
+# Evaluate performance on the test set
+## Confusion Matrix
+rf_obb_preds |>
+  conf_mat(truth = purchased, estimate = .pred_class) |>
+  autoplot(type = "heatmap")
+
+## Overall Test Metrics (Accuracy, ROC AUC, Sensitivity, Specificity)
+rf_obb_preds |>
+  metric_set(accuracy, roc_auc, sens, spec)(
+    truth = purchased, estimate = .pred_class, .pred_yes)
+```
+
+::: {.callout-tip}
+#### Insights from the OOB-Tuned Model Performance
+-   **Test Set Performance:** The OOB-tuned Random Forest achieved an accuracy of .813 and an ROC AUC of 0.802 on the unseen test set, which is slightly better than the performance of the 10-Fold CV-tuned model (accuracy = 0.805, ROC AUC = 0.799).
+:::
+
 ### Method 2: Relying on Robust Defaults (No Search Required)
 
-For many big data applications, **you don't even need a grid search at all**.
-
-Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradient Boosting (XGBoost) or Neural Networks—which fail completely if tuned poorly—Random Forests perform close to optimal using standard heuristics:
+::: {.callout-tip title="Why Defaults Work Well"}
+> For many big data applications, **you don't even need a grid search at all**.
+>
+> Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradient Boosting (XGBoost) or Neural Networks — which fail completely if tuned poorly — **Random Forests perform close to optimal using standard heuristics**:
 
 1.  **`trees` = 500 to 1,000:** More trees never cause overfitting; performance simply plateaus once the variance reduction reaches diminishing returns.
 
@@ -1960,12 +2014,13 @@ Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradie
 3.  **`min_n` = 1 (classification) or 5 (regression):** Unpruned, deep trees decorrelate best when combined.
 
 If dataset scale makes grid searching prohibitive, fitting a **single 1,000-tree forest with default settings** delivers strong results in a fraction of the time.
+:::
 
 ```{r rf-default-hyper}
 
-# 1. Model Spec (OOB prediction mode)
+# Model Spec (OOB prediction mode)
 rf_default_spec <- rand_forest(
-  trees = 500,
+  trees = 1000,
   mtry = sqrt(15), #3.9
   min_n = 1 # classificaiton default
 ) |>
@@ -1994,10 +2049,44 @@ rf_default_preds |>
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Random Forest Ensemble (Default) |
 |------------------|------------------|------------------|-------------------|
 | **Accuracy** | 0.774 | **0.805** | 0.804 |
-| **ROC AUC** | 0.761 | **0.799** | 0.794 |
+| **ROC AUC** | 0.761 | **0.799** | 0.797 |
 
-::: {.callout-tip title="Takeaway for Class"}
-Compared with using time-consuming 10 Fold CV-tuned method, the default method reached similar performance faster.
+### RF With Default 1000 Trees
+
+With the following hyperparameter settings:
+
+```r
+rf_default_spec <- rand_forest(
+  trees = 1000,
+  mtry = sqrt(15), #3.9
+  min_n = 1 
+) |>
+  set_engine("ranger", importance = "permutation") |> 
+  set_mode("classification")
+```
+
+We achieved the following performance metrics on the unseen test set:
+
+```r
+# A tibble: 4 × 3
+  .metric  .estimator .estimate
+  <chr>    <chr>          <dbl>
+1 accuracy binary         0.810
+2 sens     binary         0.359
+3 spec     binary         0.952
+4 roc_auc  binary         0.800
+```
+
+::: {.callout-tip title="Takeaway from the Three Random Forest Methods"}
+-  Compared with using time-consuming 10 Fold CV-tuned method, the default method reached similar performance faster.
+
+  -  For large datasets, the default method is often sufficient to achieve strong predictive performance without the overhead of hyperparameter tuning.
+
+-  The **OOB-tuned method slightly outperformed** both the CV-tuned and default methods, but the difference is marginal, suggesting that for many practical applications, using defaults or OOB tuning may be preferable due to computational efficiency.
+
+-  By increasing tree size to 1,000 trees, we achieved a slight improvement that exceeds the performance of the 10-Fold CV-tuned model, demonstrating that more trees can help stabilize predictions.
+
+  -  **Practical Recommendation:** For large-scale applications, consider using **OOB tuning** or **robust defaults** to save time while still achieving competitive performance.
 :::
 
 ### Summary Table for Random Forest Tuning Strategy
@@ -2092,7 +2181,7 @@ Short answer: Neither is strictly "better"—they trade off bias and variance di
 
 # **Gradient Boosting**: Learning from Residuals
 
-While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
+> While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
 
 -   Gradient boosting for regression
 
@@ -2116,33 +2205,38 @@ $$\text{Final Prediction} = \text{Shot}_1 + \text{Shot}_2 + \text{Shot}_3 + \dot
 
 To predict a continuous target variable $y$ using features $X$:
 
-### Step 1: Initialize with a Baseline Constant
+-  **Step 1: Initialize with a Baseline Constant**
 
 Start with a single constant prediction $\hat{f}_0(x)$—typically the mean of $y$ for all observations:
 
 $$\hat{f}_0(x) = \bar{y}$$
 
-------------------------------------------------------------------------
-
-### Step 2: Sequentially Fit Trees to Residuals
+-   **Step 2: Sequentially Fit Trees to Residuals**
 
 For $m = 1$ to $M$ (where $M$ is the total number of trees):
 
-1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
+  1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
 
-2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable.
+  2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable instead of $y$.
 
-3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
+  -   **Terminal Node (Leaf) Outputs ($γ_{j,m}$)**:The tree partitions the feature space into $J$ disjoint regions (leaves) $R_{1,m}, R_{2,m}, \dots, R_{J,m}$. For a standard squared-error loss, the optimal value assigned to each leaf $j$ is simply the average of the pseudo-residuals of the training samples that fall into that leaf:$$\gamma_{j,m} = \frac{1}{\vert{}R_{j,m}\vert{}} \sum_{i \in R_{j,m}} r_{i,m}$$
+  -   **Concrete Numeric Illustration**: Suppose in Step 1, the model overestimated Customer A's spend by $\$20$ ($r_{A,1} = -20$) and underestimated Customer B's spend by $\$30$ ($r_{B,1} = +30$).In Step 2, the tree splits on a feature (e.g., loyalty_tier = Gold vs. Non-Gold):
+  
+    -   **Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
+    
+    -   **Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
+    
+    The new tree model is formally expressed as:
+    $$h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})$$
+    (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
 
-------------------------------------------------------------------------
+  3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
 
-### Step 3: Output the Final Ensemble Model
+-   **Step 3: Output the Final Ensemble Model**
 
 After fitting $M$ trees, the final prediction is:
 
 $$\hat{f}(x) = \hat{f}_0(x) + \eta \sum_{m=1}^M h_m(x)$$
-
-------------------------------------------------------------------------
 
 ## Why the Name *Gradient* Boosting?
 
@@ -2159,8 +2253,6 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 
 -   **Classification:** Log-loss / Binary Cross-Entropy.
 :::
-
-------------------------------------------------------------------------
 
 ## Key Hyperparameters in Gradient Boosting
 
@@ -2187,7 +2279,9 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 **Gradient Boosting is a generalization and upgrade of AdaBoost.** While AdaBoost was a brilliant proof-of-concept for sequential learning, Gradient Boosting replaced AdaBoost’s specific "reweighting" trick with a flexible mathematical framework based on gradient descent.
 
 ```         
-AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
+AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  
+
+Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
 ```
 
 ### AdaBoost (Adaptive Boosting)
