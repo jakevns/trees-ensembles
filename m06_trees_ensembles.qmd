@@ -1969,7 +1969,7 @@ oob_results |> arrange(oob_error)
 
 #### Finalizing the OOB-Tuned Model
 
-```{r}
+```{r rf-oob-final}
 # Extract the parameter combination with the lowest OOB error
 best_oob_rf_params <- oob_results |>
   slice_min(order_by = oob_error, n = 1)
@@ -1992,7 +1992,10 @@ rf_obb_preds |>
 ## Overall Test Metrics (Accuracy, ROC AUC, Sensitivity, Specificity)
 rf_obb_preds |>
   metric_set(accuracy, roc_auc, sens, spec)(
-    truth = purchased, estimate = .pred_class, .pred_yes)
+    truth = purchased,
+    estimate = .pred_class,
+    .pred_yes
+  )
 ```
 
 ::: {.callout-tip}
@@ -2205,34 +2208,37 @@ $$\text{Final Prediction} = \text{Shot}_1 + \text{Shot}_2 + \text{Shot}_3 + \dot
 
 To predict a continuous target variable $y$ using features $X$:
 
--  **Step 1: Initialize with a Baseline Constant**
+**Step 1: Initialize with a Baseline Constant**
 
 Start with a single constant prediction $\hat{f}_0(x)$—typically the mean of $y$ for all observations:
 
 $$\hat{f}_0(x) = \bar{y}$$
 
--   **Step 2: Sequentially Fit Trees to Residuals**
+**Step 2: Sequentially Fit Trees to Residuals**
 
 For $m = 1$ to $M$ (where $M$ is the total number of trees):
 
-  1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
+1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
 
-  2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable instead of $y$.
+2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable instead of $y$.
 
-  -   **Terminal Node (Leaf) Outputs ($γ_{j,m}$)**:The tree partitions the feature space into $J$ disjoint regions (leaves) $R_{1,m}, R_{2,m}, \dots, R_{J,m}$. For a standard squared-error loss, the optimal value assigned to each leaf $j$ is simply the average of the pseudo-residuals of the training samples that fall into that leaf:$$\gamma_{j,m} = \frac{1}{\vert{}R_{j,m}\vert{}} \sum_{i \in R_{j,m}} r_{i,m}$$
-  -   **Concrete Numeric Illustration**: Suppose in Step 1, the model overestimated Customer A's spend by $\$20$ ($r_{A,1} = -20$) and underestimated Customer B's spend by $\$30$ ($r_{B,1} = +30$).In Step 2, the tree splits on a feature (e.g., loyalty_tier = Gold vs. Non-Gold):
+   -   **Terminal Node (Leaf) Outputs ($γ_{j,m}$)**:The tree partitions the feature space into $J$ disjoint regions (leaves) $R_{1,m}, R_{2,m}, \dots, R_{J,m}$. For a standard squared-error loss, the optimal value assigned to each leaf $j$ is simply the average of the pseudo-residuals of the training samples that fall into that leaf:$$\gamma_{j,m} = \frac{1}{\vert{}R_{j,m}\vert{}} \sum_{i \in R_{j,m}} r_{i,m}$$
+   -   **Concrete Numeric Illustration**: Suppose in Step 1, the model overestimated Customer A's spend by $\$20$ ($r_{A,1} = -20$) and underestimated Customer B's spend by $\$30$ ($r_{B,1} = +30$).In Step 2, the tree splits on a feature (e.g., loyalty_tier = Gold vs. Non-Gold):
   
-    -   **Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
+     -   **Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
     
-    -   **Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
+     -   **Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
     
-    The new tree model is formally expressed as:
-    $$h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})$$
-    (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
+     The new tree model is formally expressed as:
 
-  3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
+      $$
+      h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})
+      $$
+      (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
 
--   **Step 3: Output the Final Ensemble Model**
+3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
+
+**Step 3: Output the Final Ensemble Model**
 
 After fitting $M$ trees, the final prediction is:
 
@@ -2256,7 +2262,7 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 
 ## Key Hyperparameters in Gradient Boosting
 
-Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
+Unlike Random Forests — where adding more trees never causes overfitting — **Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
 |------------------|------------------|------------------|--------------------|
@@ -2279,12 +2285,16 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 **Gradient Boosting is a generalization and upgrade of AdaBoost.** While AdaBoost was a brilliant proof-of-concept for sequential learning, Gradient Boosting replaced AdaBoost’s specific "reweighting" trick with a flexible mathematical framework based on gradient descent.
 
 ```         
-AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  
+AdaBoost Strategy: 
+[Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► 
+[Tree 2 fits weighted data]  
 
-Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
+Gradient Boosting Strategy: 
+[Tree 1] ──► Calculate errors (y - y_hat) ──► 
+[Tree 2 fits directly to RESIDUALS]
 ```
 
-### AdaBoost (Adaptive Boosting)
+**AdaBoost (Adaptive Boosting)**
 
 -   **The Mechanism:** Starts with equal weights for every row. After fitting a tree (usually a 1-split decision stump), it **increases the weights of misclassified rows** and decreases the weights of correct ones.
 
@@ -2292,7 +2302,7 @@ Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ─�
 
 -   **Voting:** Final predictions are made via a **weighted vote**, where high-accuracy trees get more say than weaker trees.
 
-### Gradient Boosting (GBM)
+**Gradient Boosting (GBM)**
 
 -   **The Mechanism:** Instead of changing row weights, the next tree is trained to directly predict the **residuals** (the leftover mathematical error $y - \hat{y}$) of all previous trees combined.
 
@@ -2340,17 +2350,31 @@ AdaBoost typically relies on **decision stumps** (trees with a depth of 1), whic
 
 # **XGBoost**: eXtreme Gradient Boosting
 
-While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
+> While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
+>
+> XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
 
-XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
+::: {.callout-note title="Why XGBoost is Popular"}
+-   **Performance:** XGBoost consistently wins Kaggle competitions and outperforms standard GBM implementations in both speed and accuracy.
 
-## What Makes XGBoost "eXtreme"?
+    -   The performance improvements of XGBoost over standard GBM are not just incremental; they are **orders of magnitude faster** and often yield **better predictive accuracy**.
 
-The primary distinction lies in three pillars: **Regularization**, **Second-Order Optimization**, and **System Engineering**.
+-   **Flexibility:** It supports regression, classification, ranking, and user-defined loss functions.
 
-## Statistical Innovations
+    -   It also allows for custom evaluation metrics, enabling practitioners to optimize for business-specific objectives.
 
-### A. Direct Regularization on Tree Structure
+-   **Scalability:** XGBoost is designed to handle massive datasets efficiently, with built-in support for parallelization and distributed computing.
+
+    -   It can scale to billions of rows and thousands of features, making it suitable for large-scale machine learning tasks.
+:::
+
+## Reasons Behind Performance, Flexibility, and Scalability
+
+The popularity of the XGBoost algorithm is due to its combination of **statistical innovations** (like regularization and second-order optimization) **algorithmic engineering** (like sparsity awareness and parallelization), and **system engineering** . These innovations make it a powerful tool for predictive modeling, especially in competitive machine learning scenarios.
+
+### Statistical Innovations
+
+#### A. Direct Regularization on Tree Structure
 
 Standard GBM controls model complexity indirectly by limiting tree depth or capping the number of trees. XGBoost explicitly incorporates a **regularization penalty (**$\Omega$) directly into the objective function that the algorithm minimizes at every split:
 
@@ -2363,9 +2387,7 @@ $$\Omega(h) = \gamma T + \frac{1}{2} \lambda \sum_{j=1}^T w_j^2 + \alpha \sum_{j
 -   $T$ (Number of Leaves): $\gamma$ (gamma) penalizes adding new leaf nodes. A split is only allowed if the improvement in loss exceeds $\gamma$ (acting as automated pruning).
 -   $w_j$ (Leaf Weights): $\lambda$ ($L_2$ Ridge penalty) and $\alpha$ ($L_1$ Lasso penalty) penalize extreme leaf prediction values, smoothing predictions and preventing individual leaves from overfitting to noisy data points.
 
-------------------------------------------------------------------------
-
-### B. Second-Order Taylor Expansion (Gradients + Hessians)
+#### B. Second-Order Taylor Expansion (Gradients + Hessians)
 
 Standard Gradient Boosting relies on first-order derivatives (the direction of error, or gradients). XGBoost uses a **second-order Taylor expansion** to approximate the loss function:
 
@@ -2378,11 +2400,9 @@ $$L(y_i, \hat{y}_i^{(m)}) \approx L(y_i, \hat{y}_i^{(m-1)}) + g_i w + \frac{1}{2
 By using the Hessian ($h_i$), XGBoost measures how fast the gradient is changing. This gives the algorithm "Newton-Raphson" step sizes, allowing it to calculate the precise optimal leaf weights $w_j$ in far fewer boosting iterations than standard GBM.
 :::
 
-------------------------------------------------------------------------
+### Algorithmic Innovations
 
-## Algorithmic Innovations
-
-### A. Native Handling of Missing Values (Sparsity Awareness)
+#### A. Native Handling of Missing Values (Sparsity Awareness)
 
 In traditional decision trees, missing data (`NA`s) must be imputed before training. XGBoost handles missing values natively:
 
@@ -2390,7 +2410,7 @@ In traditional decision trees, missing data (`NA`s) must be imputed before train
 2.  It compares the loss reduction of both directions and learns a **default direction** for missing values at every single node.
 3.  During inference, if a new observation contains an `NA`, it automatically follows the learned default pathway.
 
-### B. Feature & Row Subsampling
+#### B. Feature & Row Subsampling
 
 Borrowing directly from Random Forests, XGBoost supports:
 
@@ -2399,7 +2419,17 @@ Borrowing directly from Random Forests, XGBoost supports:
 
 This double-subsampling decorrelates sequential trees further and speeds up execution time.
 
-## System Engineering: Why It's Fast
+### System Engineering: Why It's Fast
+
+XGBoost is engineered for speed and efficiency, making it suitable for large-scale datasets. Key system-level optimizations include:
+
+-   **Cache-Aware Block Structure:** XGBoost stores feature data in a block structure that is optimized for CPU cache usage, reducing memory access times.
+
+-   **Parallelized Split Finding:** Instead of evaluating splits sequentially, XGBoost evaluates all possible split points across features in parallel, leveraging multi-core processors.
+
+-   **Out-of-Core Computation:** For datasets that exceed RAM, XGBoost can perform computations directly from disk using efficient data structures and algorithms.
+
+Below is a comparison of how standard GBM and XGBoost handle split finding, parallelization, and hardware efficiency:
 
 | Feature | Standard GBM | XGBoost |
 |------------------------|------------------------|------------------------|
@@ -2430,7 +2460,6 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Gradient Boosting** | Sequential (Residuals) | Shallow | Learning rate, early stopping | Low bias; adapts to hard cases |
 | **XGBoost** | Sequential (Gradients + Hessians) | Shallow / Medium | $L_1$/$L_2$ regularization, $\gamma$ pruning, subsampling | Peak predictive power; blazing speed on huge datasets |
 
-
 ## XGBoost Recipe
 
 ### XGBoost Classification Recipe (purchased)
@@ -2452,7 +2481,7 @@ boost_class_rec |> prep() |> juice() |> glimpse()
 
 ### XGBoost Regression Recipe (log_avg_order_amt)
 
-```{r}
+```{r boost-reg-recipe}
 boost_reg_rec <- recipe(log_avg_order_amt ~ ., data = camp_train) |>
   update_role(customer_id, new_role = "ID") |>
   update_role(purchased, new_role = "unused") |> # Exclude classification outcome
@@ -2705,7 +2734,7 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
 
 ### Partial Dependence Plots (PDP) and SHAP Values
 
-```{r}
+```{r pdp-shap}
 #| eval: false
 # Setup: one explainer, used for both PDP and SHAP
 #install.packages("DALEX")
@@ -2730,7 +2759,7 @@ explainer_boost <- explain_tidymodels(
 
 ### Partial Dependence Plots (PDP) for Two Predictors
 
-```{r}
+```{r }
 #| eval: false
 # PDP — cart_adds_30d
 model_profile(explainer_boost, variables = "cart_adds_30d", N = 500) |>
@@ -2743,7 +2772,7 @@ model_profile(explainer_boost, variables = "discount_rate_seen", N = 500) |>
 
 ### SHAP beeswarm: 
 
-```{r}
+```{r shap-beeswarm}
 #| eval: false
 xgb_model <- final_boost_fit |> extract_fit_engine()
 X_train <- camp_train_baked |> as.matrix()
@@ -2877,6 +2906,34 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 ```{r ex6-5, eval=FALSE}
 # Your code here
 
+```
+
+# Save & Load Everything
+
+```{r save, eval=FALSE}
+# ── Save workspace ────────────────────────────────────────────────────────────
+# Saves all objects in your current R environment to a .RData file
+# Run this before closing Positron
+
+save.image(file = "my_workspace.RData")
+
+# Optional: also save just specific objects (lighter file)
+# save(boost_fit, rf_fit, camp_train, camp_test, class_rec,
+#      file = "ml_objects.RData")
+
+cat("Workspace saved:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
+cat("File size:", round(file.size("my_workspace.RData") / 1e6, 1), "MB\n")
+```
+
+```{r load, eval=FALSE}
+# ── Load workspace ────────────────────────────────────────────────────────────
+# Run this at the start of a new Positron session to restore all objects
+
+load("my_workspace.RData")
+
+cat("Workspace loaded:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
+cat("Objects restored:", length(ls()), "\n")
+ls() # list everything that was loaded
 ```
 
 # Appendix
