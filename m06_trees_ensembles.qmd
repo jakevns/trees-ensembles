@@ -2225,16 +2225,16 @@ For $m = 1$ to $M$ (where $M$ is the total number of trees):
    -   **Terminal Node (Leaf) Outputs ($γ_{j,m}$)**:The tree partitions the feature space into $J$ disjoint regions (leaves) $R_{1,m}, R_{2,m}, \dots, R_{J,m}$. For a standard squared-error loss, the optimal value assigned to each leaf $j$ is simply the average of the pseudo-residuals of the training samples that fall into that leaf:$$\gamma_{j,m} = \frac{1}{\vert{}R_{j,m}\vert{}} \sum_{i \in R_{j,m}} r_{i,m}$$
    -   **Concrete Numeric Illustration**: Suppose in Step 1, the model overestimated Customer A's spend by $\$20$ ($r_{A,1} = -20$) and underestimated Customer B's spend by $\$30$ ($r_{B,1} = +30$).In Step 2, the tree splits on a feature (e.g., loyalty_tier = Gold vs. Non-Gold):
   
-     -   **Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
+    **Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
     
-     -   **Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
+    **Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
     
      The new tree model is formally expressed as:
 
-      $$
-      h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})
-      $$
-      (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
+  $$
+  h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})
+  $$
+  (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
 
 3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
 
@@ -2437,6 +2437,47 @@ Below is a comparison of how standard GBM and XGBoost handle split finding, para
 | **Parallelization** | Sequential only (must wait for previous tree to finish). | Parallelized split finding across feature columns during node creation. |
 | **Hardware Efficiency** | Standard memory layout. | **Cache-aware block structure** loads feature data directly into CPU L1/L2 caches. |
 
+## How XGBoost Builds Trees: Similarity Scores & Output Values
+
+While standard decision trees split nodes using **Gini Impurity** or **Variance Reduction**, XGBoost uses the **Similarity Score** (derived directly from the Gradients $g_i$ and Hessians $h_i$) to evaluate splits and assign prediction values to leaf nodes.
+
+### Step 1: Calculate the Root Similarity Score
+
+For any collection of data points in a node, the **Similarity Score** measures how well the predictions in that node align with the true targets, adjusted by model complexity:
+
+$$\text{Similarity Score} = \frac{\left( \sum g_i \right)^2}{\sum h_i + \lambda}$$
+
+- $\sum g_i$: The sum of the first derivatives (residuals/errors) for all observations in the node.
+- $\sum h_i$: The sum of the second derivatives (hessians/curvature) for all observations in the node.
+- $\lambda$: The $L_2$ regularization parameter (higher $\lambda$ reduces the similarity score and shrinks trees).
+
+### Step 2: Evaluate Split Quality (Gain)
+
+To determine whether to split a node into a **Left** and **Right** child, XGBoost calculates the **Gain** of the candidate split:
+
+$$\text{Gain} = \text{Similarity}_{\text{Left}} + \text{Similarity}_{\text{Right}} - \text{Similarity}_{\text{Root}}$$
+
+- If $\text{Gain} > 0$, splitting the node improves the objective function.
+- **Tree Pruning ($\gamma$):** XGBoost compares the calculated Gain to the regularization parameter $\gamma$ (gamma). If $\text{Gain} - \gamma < 0$, the split is pruned.
+
+### Step 3: Calculate Leaf Output Values (Predictions)
+
+Once the tree structure is finalized, each terminal leaf node $j$ is assigned a static prediction weight $w_j$ (**Output Value**):
+
+$$w_j = -\frac{\sum_{i \in \text{Leaf}_j} g_i}{\sum_{i \in \text{Leaf}_j} h_i + \lambda}$$
+
+This formula computes the exact step size (via the Newton-Raphson method) that minimizes the loss function for all samples landing in that specific leaf.
+
+### Step 4: Making Final Predictions (Sequential Ensemble)
+
+To make a prediction for a new observation, XGBoost sums the scaled outputs across all boosted trees:
+
+$$\hat{y}_i = \text{Base Score} + \eta \sum_{m=1}^M f_m(x_i)$$
+
+- **Base Score:** The initial prediction before any trees are built (commonly $0.5$ for classification or the mean of $y$ for regression).
+- $\eta$ (Eta / Learning Rate): Shrinks the contribution of each tree (typically $0.01$ to $0.3$) to ensure slow, robust learning.
+- $f_m(x_i)$: The output value $w_j$ produced by the $m$-th tree.
+
 ## Key Hyperparameter Mapping (`tidymodels`)
 
 When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, standard parameters map directly to XGBoost terms:
@@ -2467,16 +2508,18 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 ```{r boost-class-recipe}
 # XGBoost requires dummy variables!
 boost_class_rec <- recipe(purchased ~ ., data = camp_train) |>
+  step_rm(log_avg_order_amt) |> 
   update_role(customer_id, new_role = "ID") |>
-  update_role(log_avg_order_amt, new_role = "unused") |>
   step_impute_median(all_numeric_predictors()) |>
   step_novel(all_nominal_predictors()) |>
   step_unknown(all_nominal_predictors()) |>
   step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
-  step_zv(all_predictors()) |>
-  step_rm(has_role("unused")) # Clean out extra columns
+  step_zv(all_predictors())
 
-boost_class_rec |> prep() |> juice() |> glimpse()
+boost_class_rec |> 
+  prep() |> 
+  bake(new_data = NULL) |> 
+  glimpse()
 ```
 
 ### XGBoost Regression Recipe (log_avg_order_amt)
