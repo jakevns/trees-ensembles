@@ -2930,28 +2930,22 @@ sv_importance(shp, kind = "bar") +
 
 > To explain why the model made a specific prediction for a single customer (e.g., the 1st row of your data):
 
-```{r}
-# Step 1: compute SHAP for the single customer using shapviz directly
-xgb_model <- final_boost_fit |> extract_fit_engine()
+**How to Interpret the Full Narrative for Customer Row 10**
 
-X_train <- class_rec |>
-  prep() |>
-  bake(new_data = camp_train) |>
-  select(-purchased) |>
-  as.matrix()
+-   Start at the Baseline ($E[f(x)]$): Begin with the average customer expectation in log-odds.
 
-shap_obj <- shapviz(xgb_model, X_pred = X_train)
+-   Add/Subtract Feature Contributions: Walk line-by-line through each feature row. Each bar shifts the running total left or right by its SHAP value.
 
-# Step 2: waterfall for one specific customer (e.g., row 2)
-sv_waterfall(shp, row_id = 2) +
-  labs(title = "SHAP Waterfall — Customer Row 2")
-```
+-   End at the Final Prediction ($f(x)$): The final score at the end of the waterfall represents Customer Row 10's total predicted score in log-odds:$$f(x) = E[f(x)] + \sum \text{SHAP values}$$
+**Converting the Final Prediction to Probability**
 
-```{r shap-local}
+To get Customer Row 10's actual predicted purchase probability, apply the logistic transformation to the final $f(x)$ value:
+$$P(\text{Purchased} = \text{"yes"}) = \frac{1}{1 + e^{-f(x)}}$$Example: If $f(x) = 0.85$, then:$$P = \frac{1}{1 + e^{-0.85}} \approx \frac{1}{1 + 0.427} \approx 70.1\% \text{ probability of purchase}$$
+```{r shap-local-1}
 # Select a single customer/observation
 single_customer <- camp_train |> 
   select(-purchased) |> 
-  slice(2)
+  slice(10)
 
 # Compute individual SHAP breakdown
 shap_single <- predict_parts(
@@ -2962,6 +2956,27 @@ shap_single <- predict_parts(
 
 # Plot Waterfall Chart showing baseline prediction -> feature contributions -> final score
 plot(shap_single)
+```
+
+```{r shap-local-2}
+# Step 1: compute SHAP for the single customer using shapviz directly
+xgb_model <- final_boost_fit |> extract_fit_engine()
+
+X_train <- boost_class_rec  |>
+  step_dummy(all_nominal_predictors(), -all_outcomes()) |> # Ensure categorical features are dummy-encoded
+  prep() |>
+  bake(new_data = camp_train) |>
+  select(-any_of(c("purchased", "customer_id"))) |> 
+  select(where(is.numeric)) |>
+  as.matrix()
+
+X_train |> glimpse()
+
+shap_obj <- shapviz(xgb_model, X_pred = X_train)
+
+# Step 2: waterfall for one specific customer (e.g., row 10)
+sv_waterfall(shap_obj, row_id = 10) +
+  labs(title = "SHAP Waterfall — Customer Row 10")
 ```
 
 **Waterfall Plot (Single Customer):**
