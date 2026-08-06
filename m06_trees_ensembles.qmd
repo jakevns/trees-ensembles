@@ -2478,6 +2478,27 @@ $$\hat{y}_i = \text{Base Score} + \eta \sum_{m=1}^M f_m(x_i)$$
 - $\eta$ (Eta / Learning Rate): Shrinks the contribution of each tree (typically $0.01$ to $0.3$) to ensure slow, robust learning.
 - $f_m(x_i)$: The output value $w_j$ produced by the $m$-th tree.
 
+## Regression vs. Classification in XGBoost
+
+While the tree-building math remains the same, the loss function changes the calculated Gradients ($g_i$) and Hessians ($h_i$), as well as how the final ensemble prediction is converted.
+
+::: {.callout-note title="XGBoost: Regression vs. Binary Classification" collapse="false"}
+While the structural mechanics (Similarity Scores, Gain, and Pruning) are identical, the underlying derivatives and final prediction transformations differ between tasks:
+
+| Component | Regression (`reg:squarederror`) | Binary Classification (`binary:logistic`) |
+| :--- | :--- | :--- |
+| **Loss Function ($L$)** | Squared Error: $\frac{1}{2}(y_i - \hat{y}_i)^2$ | Binary Log Loss: $- [y_i \ln(p_i) + (1-y_i)\ln(1-p_i)]$ |
+| **Initial Base Score** | Mean target value ($\bar{y}$) | Base probability $0.5$ ($\text{Log-Odds} = 0$) |
+| **Gradient ($g_i$)** | $g_i = \hat{y}_i - y_i$ *(Negative residual)* | $g_i = p_i - y_i$ *(Error in probability)* |
+| **Hessian ($h_i$)** | $h_i = 1$ *(Constant curvature)* | $h_i = p_i(1 - p_i)$ *(Variance / Uncertainty)* |
+| **Leaf Output ($w_j$)** | Direct numeric value adjustment | Step adjustment in **Log-Odds space** |
+| **Final Prediction** | Sum of base score + shrunk leaf outputs: $\hat{y}_i = \text{Base} + \eta \sum f_m(x_i)$ | Transform raw log-odds via Sigmoid: $P(y=1) = \frac{1}{1 + e^{-(\text{Base Log-Odds} + \eta \sum f_m(x_i))}}$ |
+
+**Key Takeaways**
+
+1. **Classification Trees Predict Log-Odds:** XGBoost builds trees on probability residuals, so leaf outputs ($w_j$) are calculated in log-odds space before being converted back to probabilities at the end using the logistic sigmoid function.
+2. **Confidence-Weighted Splitting:** In classification, observations with high uncertainty ($p_i \approx 0.5$) yield maximum Hessian values ($h_i = 0.25$), heavily influencing the Similarity Score to focus tree splits on boundary cases.
+:::
 ## Key Hyperparameter Mapping (`tidymodels`)
 
 When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, standard parameters map directly to XGBoost terms:
@@ -2491,6 +2512,7 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Feature Fraction** | `colsample_bytree` | `mtry` | Proportion of features sampled for each tree. |
 | **Data Fraction** | `subsample` | `sample_size` | Proportion of training rows sampled for each tree. |
 | **Complexity Loss** | `gamma` | `loss_reduction` | Minimum loss reduction required to make a further partition. |
+
 
 ## Summary Comparison: Decision Tree Family
 
@@ -2526,17 +2548,19 @@ boost_class_rec |>
 
 ```{r boost-reg-recipe}
 boost_reg_rec <- recipe(log_avg_order_amt ~ ., data = camp_train) |>
+  step_rm(purchased) |> # Exclude classification outcome
+  step_rm(avg_order_amt) |> # Exclude raw dollar outcome
   update_role(customer_id, new_role = "ID") |>
-  update_role(purchased, new_role = "unused") |> # Exclude classification outcome
-  update_role(avg_order_amt, new_role = "unused") |> # Exclude raw dollar outcome
   step_impute_median(all_numeric_predictors()) |>
   step_novel(all_nominal_predictors()) |>
   step_unknown(all_nominal_predictors()) |>
   step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # MANDATORY for XGBoost
-  step_zv(all_predictors()) |>
-  step_rm(has_role("unused")) # Purge unused columns for C++ engine
+  step_zv(all_predictors()) 
 
-boost_reg_rec |> prep() |> juice() |> glimpse()
+boost_reg_rec |> 
+  prep() |> 
+  bake(new_data = NULL) |>
+  glimpse()
 ```
 
 ## Fitting XGBoost
@@ -2545,8 +2569,8 @@ boost_reg_rec |> prep() |> juice() |> glimpse()
 boost_spec <- boost_tree(
   trees = 500,
   tree_depth = tune(),
-  learn_rate = tune(),
-  min_n = tune()
+  learn_rate = tune(), # eta ( 0.01 - 0.3)
+  min_n = tune() # minimum number of data points: min_child_weight (5 - 30): minimum sum of Hessians in a child node
 ) |>
   set_engine("xgboost") |>
   set_mode("classification")
@@ -2582,6 +2606,7 @@ best_boost
 
 final_boost_wf <- finalize_workflow(boost_wf, best_boost)
 final_boost_fit <- fit(final_boost_wf, data = camp_train)
+final_boost_fit
 ```
 
 ## Boosted Tree Performance
@@ -2657,7 +2682,20 @@ final_boost_fit |>
   theme_minimal(base_size = 12)
 ```
 
-------------------------------------------------------------------------
+**How to Interpret the Elements**
+
+-   *Horizontal Bar Length* (Importance Metric):\
+    Because the default metric for XGBoost in vip() is **Gain**, longer bars indicate features that contributed most to reducing training loss (Log Loss for classification or MSE for regression) across all 500 trees.
+
+    $$\text{Gain} = \text{Similarity}_{\text{Left}} + \text{Similarity}_{\text{Right}} - \text{Similarity}_{\text{Root}}$$
+
+-   *Top Feature* (At the Top of the Y-Axis):\
+    The top-ranked feature is your model’s single most influential predictor. Splits on this variable yielded the largest gains in node purity / error reduction.
+
+-   *Relative Differences* (Between Features):\
+    The metric is comparative rather than absolute. If Feature A has a Gain score of 0.30 and Feature B has 0.10, Feature A contributed roughly three times as much total loss reduction to the ensemble as Feature B.
+
+**Key Takeaway:** The top features at the top of the chart drive the vast majority of XGBoost's predictive power. Features near the bottom contribute marginally to loss reduction and could potentially be removed in future iterations to simplify the pipeline without sacrificing model performance.
 
 # **Model Comparison**
 
@@ -2775,10 +2813,9 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
 
 ## Explaining Models{#sec-explaining-models}
 
-### Partial Dependence Plots (PDP) and SHAP Values
+### Explainers for PDP and SHAP
 
-```{r pdp-shap}
-#| eval: false
+```{r explainer-setup}
 # Setup: one explainer, used for both PDP and SHAP
 #install.packages("DALEX")
 #install.packages("DALEXtra")
@@ -2786,43 +2823,154 @@ library(DALEX)
 library(DALEXtra)
 library(shapviz)
 
-camp_train_baked <- boost_class_rec |>
-  prep() |>
-  bake(new_data = camp_train) |>
-  select(-purchased)
-
 explainer_boost <- explain_tidymodels(
   model = final_boost_fit,
-  data = camp_train_baked,
+  data = camp_train |> select(-purchased), # Use RAW features here, not bake
   y = as.numeric(camp_train$purchased == "yes"),
   label = "XGBoost",
   verbose = FALSE
 )
+
 ```
 
-### Partial Dependence Plots (PDP) for Two Predictors
+### Partial Dependence Plots (PDP) for Selected Predictors
 
-```{r }
-#| eval: false
+**Meaning of Partial Dependence Plots (PDPs)**:
+
+> The term Partial Dependence Plot (PDP) was introduced by statistician *Jerome H. Friedman* in his seminal 2001 paper on Gradient Boosting ("Greedy Function Approximation: A Gradient Boosting Machine").
+
+-   The name comes directly from the mathematical concept of marginalizing out (or averaging over) all other variables to isolate the "partial" relationship between a subset of features and the prediction.
+
+-   The resulting curve is "partial" because it shows only the marginal contribution of $X_S$ to the prediction, partialling out the influence of all other covariates by holding their overall population distribution fixed.
+
+```{r pdp-plot-age-income}
+# Calculate PDP for specific variables (e.g., age, income)
+pdp_results <- model_profile(
+  explainer = explainer_boost,
+  variables = c("age", "income"), # Replace with your variable names
+  type = "partial")
+
+# Plot the PDP profiles
+plot(pdp_results)
+```
+
+::: {.callout-note title="Interpreting PDPs"}
+#### Key Concepts for Reading the Plot
+-   **X-Axis (Feature Values)**: Represents the actual range of values for a specific input variable (e.g., age from 18 to 70, or income from $20k to $150k).
+
+-   **Y-Axis (Target Prediction)**: Represents the expected (average) predicted output for your model. Because your target purchased was converted to numeric 1 or 0, the y-axis represents the predicted probability of purchase (ranging between 0.0 and 1.0).
+
+-   **The Solid Line (Partial Dependence Curve)**: Shows how the predicted probability changes on average as that specific feature increases, *while holding all other features at their average levels*.
+:::
+
+```{r pdp-plot-cart-adds-discount}
 # PDP — cart_adds_30d
-model_profile(explainer_boost, variables = "cart_adds_30d", N = 500) |>
+model_profile(
+  explainer_boost, 
+  variables = "cart_adds_30d", 
+  N = 500) |> # use a random sample of 500 observations for speed
   plot()
 
 # PDP — discount_rate_seen (reveals the nonlinear interaction)
-model_profile(explainer_boost, variables = "discount_rate_seen", N = 500) |>
+model_profile(
+  explainer_boost, 
+  variables = "discount_rate_seen", 
+  N = NULL) |> # use all observations for this one
   plot()
 ```
 
 ### SHAP beeswarm: 
 
+#### Step 1: Calculate SHAP Values
+
+```{r shap-value}
+shap_raw <- predict_parts(
+  explainer_boost,
+  new_observation = camp_train |> select(-purchased),
+  type = "shap",
+  B = 50 #average over 50 different variable orderings to produce stable, precise estimates.
+)
+
+# Convert to a shapviz object for enhanced plotting
+shp <- shapviz(shap_raw) 
+plot(shap_raw)
+```
+
+#### Step 2: Global Interpretability (All Observations)
+
+##### A. Beeswarm Summary Plot**
+> Shows feature importance alongside the direction and impact of feature values.
+
 ```{r shap-beeswarm}
-#| eval: false
+# Beeswarm plot showing overall feature impact and value trends
+shp |> 
+  sv_importance(kind = "beeswarm") + 
+  labs(title = "XGBoost — SHAP Variable Importance (Gain)")
+```
+
+**Beeswarm Plot:**
+
+-   Y-axis: Features ordered from top (most important) to bottom (least important).
+
+-   X-axis: SHAP value. Points to the right of 0 increase purchase probability; points to the left decrease it.
+
+-   Color: High feature values are typically red/purple, low values are blue.
+
+##### B. Global Feature Importance Bar Chart**
+
+> Ranks features purely by their mean absolute SHAP value.
+
+```{r shap-global}
+# Simple bar chart of global feature importance
+sv_importance(shp, kind = "bar") +
+  labs(title = "XGBoost — SHAP Variable Importance (Gain)")
+```
+
+#### Step 3: Local Interpretability (Single Observation)
+
+> To explain why the model made a specific prediction for a single customer (e.g., the 1st row of your data):
+
+```{r}
+# Step 1: compute SHAP for the single customer using shapviz directly
 xgb_model <- final_boost_fit |> extract_fit_engine()
-X_train <- camp_train_baked |> as.matrix()
+
+X_train <- class_rec |>
+  prep() |>
+  bake(new_data = camp_train) |>
+  select(-purchased) |>
+  as.matrix()
 
 shap_obj <- shapviz(xgb_model, X_pred = X_train)
-sv_importance(shap_obj, kind = "beeswarm", max_display = 12)
+
+# Step 2: waterfall for one specific customer (e.g., row 2)
+sv_waterfall(shp, row_id = 2) +
+  labs(title = "SHAP Waterfall — Customer Row 2")
 ```
+
+```{r shap-local}
+# Select a single customer/observation
+single_customer <- camp_train |> 
+  select(-purchased) |> 
+  slice(2)
+
+# Compute individual SHAP breakdown
+shap_single <- predict_parts(
+  explainer = explainer_boost,
+  new_observation = single_customer,
+  type = "shap"
+)
+
+# Plot Waterfall Chart showing baseline prediction -> feature contributions -> final score
+plot(shap_single)
+```
+
+**Waterfall Plot (Single Customer):**
+
+-   Starts at the dataset average prediction (intercept).
+  
+-   Green/positive bars push the prediction higher for that individual.
+ 
+-   Red/negative bars push the prediction lower.
 
 ## Model Comparison Summary
 
@@ -2845,7 +2993,7 @@ A single decision tree is a **high-variance** model — it can fit the training 
 
 The Lasso logistic regression (linear model) provides a useful baseline: if tree methods don't outperform it, the relationships in the data are likely approximately linear and the simpler model is preferable (parsimony).
 
-When tree methods do outperform Lasso — as they typically will here, given the nonlinear interactions built into the data-generating process — it's because they are *discovering the interactions automatically* rather than requiring the analyst to specify them in advance.
+If tree methods do outperform Lasso, it's because they are *discovering the interactions automatically* rather than requiring the analyst to specify them in advance.
 :::
 
 ------------------------------------------------------------------------
@@ -2868,21 +3016,6 @@ When tree methods do outperform Lasso — as they typically will here, given the
 | Reliable performance with minimal tuning | Random forest |
 | Maximum predictive accuracy; time to tune carefully | XGBoost |
 | Linear relationships dominate; many correlated predictors | Lasso LR (from Module 4) |
-
-## Recipe Checklist for Trees
-
-``` r
-recipe(outcome ~ ., data = train) |>
-  step_impute_median(all_numeric_predictors()) |>  # ✓ needed
-  step_unknown(all_nominal_predictors()) |          # ✓ production safety
-  step_dummy(all_nominal_predictors(),              # ✓ needed
-             one_hot = TRUE) |                      # ✓ helps trees
-  step_zv(all_predictors())                         # ✓ safety net
-  # step_normalize()  ← NOT needed for trees
-  # step_log()        ← NOT needed for predictors (rank-invariant)
-```
-
-------------------------------------------------------------------------
 
 # **Exercises**
 
@@ -2951,6 +3084,83 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 
 ```
 
+## ✏️ Exercise 6.6 — Model Interpretation with PDPs and SHAP
+
+Using the `explainer_boost` object and `final_boost_fit` already created
+in this module, answer the following questions.
+
+**Part A — Partial Dependence Plot**
+
+Run a PDP for `recency_days` using `model_profile()` with `N = 500`.
+
+1. As `recency_days` increases from 0 to 100, does predicted purchase
+   probability increase or decrease? Is the relationship linear or
+   nonlinear?
+2. At approximately what value of `recency_days` does the predicted
+   probability begin to flatten out? What does this suggest about how
+   the model treats very lapsed customers?
+3. A marketing manager argues: "We should send campaigns to customers
+   who haven't purchased in over 90 days to re-engage them." Based on
+   the PDP, would the model agree that this group is a good targeting
+   opportunity? Explain your reasoning.
+
+```{r ex6-6a, eval=FALSE}
+# Your code here
+
+```
+
+**Part B — SHAP Beeswarm**
+
+Compute SHAP values using `predict_parts()` with `type = "shap"` and
+`B = 25`, then produce a beeswarm plot using `sv_importance()`.
+
+1. Which three features have the widest spread of SHAP values along
+   the x-axis? What does a wide spread tell you about how consistently
+   that feature affects predictions across customers?
+2. Look at `discount_rate_seen` in the beeswarm. Are high values
+   (red dots) associated with positive or negative SHAP values? Does
+   this direction match what you would expect from the data-generating
+   process?
+3. Compare the beeswarm plot to the variable importance plot (VIP) from
+   Section 5. Do the two methods agree on the top three most important
+   features? If they disagree on any feature, explain why the two
+   methods might rank it differently.
+
+```{r ex6-6b, eval=FALSE}
+# Your code here
+
+```
+
+**Part C — Waterfall Plot for a Specific Customer**
+
+Select the customer in `camp_train` with the **lowest** predicted
+purchase probability (hint: use `augment()` and `slice_min()`). Compute
+a SHAP waterfall plot for that customer using `predict_parts()` and
+`plot()`.
+
+1. What is the baseline prediction (the starting point of the waterfall)?
+   What does this represent?
+2. Which single feature contributed the most to pushing this customer's
+   prediction *below* the baseline?
+3. If you were a marketing analyst trying to improve this customer's
+   score, which feature shown in the waterfall is the most *actionable*
+   — meaning something the business could realistically change through
+   a targeted campaign? Explain what action you would take.
+
+```{r ex6-6c, eval=FALSE}
+# Hint: find the lowest-probability customer first
+lowest_prob_customer <- augment(final_boost_fit, new_data = camp_train) |>
+  slice_min(.pred_yes, n = 1) |>
+  pull(customer_id)
+
+single_customer <- camp_train |>
+  filter(customer_id == lowest_prob_customer) |>
+  select(-purchased)
+
+# Your SHAP code here
+
+```
+
 # Save & Load Everything
 
 ```{r save, eval=FALSE}
@@ -2981,3 +3191,15 @@ ls() # list everything that was loaded
 
 # Appendix
 
+## Recipe Checklist for Trees
+
+``` r
+recipe(outcome ~ ., data = train) |>
+  step_impute_median(all_numeric_predictors()) |>  # ✓ needed
+  step_unknown(all_nominal_predictors()) |          # ✓ production safety
+  step_dummy(all_nominal_predictors(),              # ✓ needed
+             one_hot = TRUE) |                      # ✓ helps trees
+  step_zv(all_predictors())                         # ✓ safety net
+  # step_normalize()  ← NOT needed for trees
+  # step_log()        ← NOT needed for predictors (rank-invariant)
+```
