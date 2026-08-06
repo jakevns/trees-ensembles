@@ -1,12 +1,12 @@
 ---
-title: "Module 6 — Trees and Ensembles"
+title: "Module 6 — Trees and Ensembles - Part 1 & Part 2"
 subtitle: "Applied Machine Learning for Marketing"
 author: "Jake Evans"
 date: today
 format:
   html:
     toc: true
-    toc-depth: 4
+    toc-depth: 5
     toc-expand: 1
     toc-location: right-body
     toc-title: "Contents"
@@ -15,15 +15,16 @@ format:
     code-tools: true
     theme: cosmo
     highlight-style: github
-    df-print: paged
+    df-print: kable
     embed-resources: true
+engine: knitr
 execute:
   warning: false
   message: false
   freeze: true
 ---
 
-# Learning Objectives {.unnumbered}
+# **Learning Objectives** {.unnumbered}
 
 By the end of this notebook you will be able to:
 
@@ -34,13 +35,14 @@ By the end of this notebook you will be able to:
 5.  Apply `step_unknown()` and `one_hot = TRUE` in a tree-appropriate recipe
 6.  Compare all three methods against a Lasso logistic regression baseline using cross-validated metrics
 
-> **Textbook references:** ISLR Chapter 8 (*Tree-Based Methods* — conceptual depth on trees, bagging, random forests, boosting); TMWR Chapter 12 (*Model Tuning and the Dangers of Overfitting* — tuning workflow applied to tree hyperparameters)
+> **Textbook references:** ISLR Chapter 8 (*Tree-Based Methods* — conceptual depth on trees, bagging, random forests, boosting); TMWR Chapter 12 (*Model Tuning and the Dangers of Overfitting* — tuning workflow applied to tree hyperparameters); TMWR Chapter 13 (*Ensemble Learning* — bagging, random forests, boosting); TMWR Chapter 18 (*Variable Importance and Partial Dependence Plots* — interpretation of tree-based models).
 
 ------------------------------------------------------------------------
 
-# Setup
+# **Setup** {.unnumbered}
 
 ```{r setup}
+#install.packages("rpart.plot")
 library(tidymodels)
 library(tidyverse)
 library(rpart.plot) # visualize decision trees
@@ -64,7 +66,7 @@ The engines for decision trees (`rpart`), random forests (`ranger`), and boosted
 
 ------------------------------------------------------------------------
 
-# The Digital Campaign Dataset
+# **The Digital Campaign Dataset** {.unnumbered}
 
 ## Data Generation
 
@@ -315,7 +317,7 @@ The temporary variables such as `loyalty_effect`, `channel_effect`, `logit_purch
 
 ### Loyalty-tier effect
 
-```{{r}}
+``` r
 loyalty_effect <- case_when(
   loyalty_tier == "Bronze" ~ 0,
   loyalty_tier == "Silver" ~ 0.55,
@@ -341,32 +343,33 @@ Each customer receives an adjustment based on loyalty tier:
 
   $e^{1.25} \approx 3.49$
 
-- Holding everything else constant, a Platinum customer has about 3.5 times the purchase odds of an otherwise similar Bronze customer.
+- Holding everything else constant, a Platinum customer has about **3.5 times** the purchase odds of an otherwise similar Bronze customer.
 
 ### `logit_purchase`
 
-```{{r}}
- logit_purchase <- -5.0 + # intercept → ~ 1/(1 + exp(-(-5)) = 0.67% base rate; predictors raise overall purchase rate to around 24%
-        0.70 * log1p(site_visits_30d) +
-        0.55 * log1p(email_clicks_30d) +
-        0.75 * cart_adds_30d +
-        0.35 * freq_12mo -
-        0.022 * recency_days +
-        0.30 * log(income / 65000) +
-        loyalty_effect +
-        channel_effect +
-        device_effect +
-        discount_bronze_boost +
-        high_engagement_boost +
-        recent_frequent_boost +
-        email_click_boost +
-        rnorm(n, mean = 0, sd = 0.45)
-    
-    factor(
-        rbinom(n, size = 1, prob = plogis(logit_purchase)),
-        levels = c(1, 0),
-        labels = c("yes", "no")
-      )
+```{r}
+#| eval: false
+logit_purchase <- -5.0 + # intercept → ~ 1/(1 + exp(-(-5)) = 0.67% base rate; predictors raise overall purchase rate to around 24%
+  0.70 * log1p(site_visits_30d) +
+  0.55 * log1p(email_clicks_30d) +
+  0.75 * cart_adds_30d +
+  0.35 * freq_12mo -
+  0.022 * recency_days +
+  0.30 * log(income / 65000) +
+  loyalty_effect +
+  channel_effect +
+  device_effect +
+  discount_bronze_boost +
+  high_engagement_boost +
+  recent_frequent_boost +
+  email_click_boost +
+  rnorm(n, mean = 0, sd = 0.45)
+
+factor(
+  rbinom(n, size = 1, prob = plogis(logit_purchase)),
+  levels = c(1, 0),
+  labels = c("yes", "no")
+)
 ```
 
 - **Intercept** = Baseline probability by converting the logit score to purchase probability as:
@@ -376,13 +379,12 @@ $$P(\text{purchased} = \text{yes}) = \frac{1}{1 + e^{-(-5)}}
 
 - The dataset may end up with a purchase rate around **24%** after the engagement, loyalty, frequency, channel, interaction, and random effects are added.
 
-- $log1p(x) = log(1 + x)$
+- `log1p(x)` = `log(1 + x)` is used to reduce the impact of extreme values in `site_visits_30d` and `email_clicks_30d`.
 
 - **`plogis()`** is used to convert the logit score to a probability between 0 and 1.
 
-\$\$ P_i = \frac{1}{1 + e^{-\eta_i}}
-
-\$\$ where $\eta_i$ is `logit_purchase`.
+$$P_i = \frac{1}{1 + e^{-\eta_i}}$$
+where $\eta_i$ is `logit_purchase`.
 
 For example:
 
@@ -403,7 +405,8 @@ A higher logit means a higher probability, but the relationship is nonlinear.
 
 The general binomial model is:
 
-$$X ∼ Binomial⁡(m,p)$$ where:
+$$X ∼ Binomial⁡(m,p)$$
+where:
 
 - X is the number of successes
 - m is the number of opportunities or trials
@@ -412,18 +415,35 @@ $$X ∼ Binomial⁡(m,p)$$ where:
 **Example:**
 
 ```{r}
-
+#| eval: false
+# rbinom(n, size, prob)
 rbinom(10, 5, 0.6)
-
 ```
 
 **Campaign Data:**
 
 In the code, `size = 5` means:
 
-> Each customer is given five possible opportunities to add an item to the cart.
+- Each customer is given five possible opportunities to add an item to the cart.
 
 For each customer, `rbinom()` returns an integer from 0 through 5:
+
+### `cart_adds_30d`
+
+``` r
+# cart_adds: derived from engagement variables
+    cart_adds_30d = rbinom(
+      n,
+      size = 5,
+      prob = pmin(
+        0.04 + 0.025 * site_visits_30d + 0.06 * email_clicks_30d,
+        0.70
+      )
+```
+
+> Note that unlike the simple example above where every customer has the same prob = 0.6, in the campaign data each customer's cart-add probability is different — it depends on their engagement level (`site_visits_30d` and `email_clicks_30d`), capped at 0.70. More engaged customers have higher cart-add rates, which in turn predicts higher purchase probability.
+
+- A customer with `site_visits_30d` = 0 and `email_clicks_30d` = 0 has a probability of only 0.04 (almost never adds to cart), while a highly engaged customer can reach the cap of 0.70.
 
 ## Outcome Variable Description
 
@@ -551,9 +571,13 @@ p3 + p4
 
 ------------------------------------------------------------------------
 
-# Train/Test Split and Recipes
+# Part 1: Trees {.unnumbered style="font-size: 28pt; font-weight: bold; color: #f1861b;"}
 
-## Split
+# **Train/Test Splits, Recipes, CV Folds**
+
+> Data splits, recipes, and CV folds will be used across all methods.
+
+## Splits
 
 ```{r split}
 set.seed(617)
@@ -575,91 +599,85 @@ cat(
 )
 ```
 
-## Why Trees Need a Different Recipe
+## Recipes
 
-Tree-based models have fundamentally different preprocessing requirements than linear models like Lasso logistic regression.
+### Why Trees Need a Different Recipe
+
+> Tree-based models have fundamentally different preprocessing requirements than linear models like Lasso logistic regression.
 
 ::: {.callout-note title="What trees DON'T need — and why"}
-**`step_normalize()`** — Trees split on *rank order*, not *magnitude*. A split at "income \> 60,000" produces identical results whether income is on the dollar scale or the normalized (z-score) scale. Normalization adds no value and just makes coefficient interpretation harder.
+- **`step_normalize()`** — Trees split on *rank order*, not *magnitude*. A split at "income \> 60,000" produces identical results whether income is on the dollar scale or the normalized (z-score) scale. **Normalization adds no value** and just makes coefficient interpretation harder.
 
-**`step_log()` on predictors** — Logarithm is a monotone transformation — it preserves rank order. If the optimal split for `income` in dollar scale is at \$60,000, the optimal split in log scale is at log(\$60,000). The tree finds the same split either way. No need to transform predictors.
+- **`step_log()` on predictors** — Logarithm is a monotone transformation — it preserves rank order. If the optimal split for `income` in dollar scale is at \$60,000, the optimal split in log scale is at log(\$60,000). The tree finds the same split either way. **No need to transform predictors**.
 
-**Consequence**: the recipe for trees is simpler and produces more interpretable split values (dollar amounts, raw counts) in the tree output.
+- **Consequence**: the recipe for trees is simpler and produces more interpretable split values (dollar amounts, raw counts) in the tree output.
 :::
 
-## Classification Recipe
+To avoid potential problems with step_log() in recipe, we will add log-transformed variable `log_avg_order_amt` to the data - train set and test set.
+
+```{r log-transform}
+# log-transform the OUTCOME (not predictors) to handle right skew
+
+camp_train <- camp_train |>
+  mutate(log_avg_order_amt = log(avg_order_amt))
+```
+
+### Classification Recipe
 
 ```{r class-recipe}
 # Classification recipe — simpler than Module 2's Lasso recipe
 class_rec <- recipe(
-  purchased ~ customer_id +
-    age +
-    income +
-    recency_days +
-    freq_12mo +
-    avg_order_amt +
-    site_visits_30d +
-    email_clicks_30d +
-    discount_rate_seen +
-    cart_adds_30d +
-    channel +
-    region +
-    loyalty_tier +
-    device,
+  purchased ~ .,
   data = camp_train
 ) |>
   update_role(customer_id, new_role = "ID") |>
-  step_impute_median(all_numeric_predictors()) |> # still needed — trees can't handle NA
-  step_unknown(all_nominal_predictors()) |> # NEW: handle unseen factor levels
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # NEW: one-hot for trees
+  update_role(log_avg_order_amt, new_role = "unused") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |> # handle previously unseen levels
+  step_unknown(all_nominal_predictors()) |> # handle missing categorical values
   step_zv(all_predictors())
 
 class_rec
 ```
 
 ::: {.callout-note title="Two new recipe steps for tree models"}
-**`step_unknown()`** — In production, new data may contain factor levels not seen during training (e.g., a new marketing channel is launched after the model was built). Without handling, this causes a prediction error. `step_unknown()` explicitly encodes unseen levels as a new "unknown" category rather than crashing. This is a production-readiness step that becomes important when models are deployed.
+- **`step_unknown()`** — In production, new data may contain factor levels not seen during training (e.g., a new marketing channel is launched after the model was built). Without handling, this causes a prediction error. `step_unknown()` explicitly encodes unseen levels as a new "unknown" category rather than crashing. This is a production-readiness step that becomes important when models are deployed.
 
-**`one_hot = TRUE` in `step_dummy()`** — Standard dummy encoding creates $k - 1$ columns per factor (dropping one reference level) to avoid multicollinearity in linear models. Trees have no multicollinearity problem — they can split on any column independently. Using `one_hot = TRUE` creates all $k$ columns, which sometimes helps trees find better splits by having each category available as a direct split candidate. For example, with `one_hot = TRUE` the tree can split directly on `channel_email == 1` rather than inferring the email effect from the remaining categories.
+- **`one_hot = TRUE` in `step_dummy()`** — Standard dummy encoding creates $k - 1$ columns per factor (dropping one reference level) to avoid multicollinearity in linear models. Trees have no multicollinearity problem — they can split on any column independently.
+
+  - Using `one_hot = TRUE` creates all $k$ columns, which sometimes helps trees find better splits by having each category available as a direct split candidate.
+
+  - For example, with `one_hot = TRUE` the tree can split directly on `channel_email == 1` rather than inferring the email effect from the remaining categories.
 :::
 
-## Regression Recipe
+### Regression Recipe
 
 ```{r reg-recipe}
 # Regression recipe: predict avg_order_amt
-# log-transform the OUTCOME (not predictors) to handle right skew
+
 reg_rec <- recipe(
-  avg_order_amt ~ customer_id +
-    age +
-    income +
-    recency_days +
-    freq_12mo +
-    site_visits_30d +
-    email_clicks_30d +
-    discount_rate_seen +
-    cart_adds_30d +
-    channel +
-    region +
-    loyalty_tier +
-    device,
+  log_avg_order_amt ~ .,
   data = camp_train
 ) |>
   update_role(customer_id, new_role = "ID") |>
+  update_role(purchased, new_role = "unused") |>
+  update_role(avg_order_amt, new_role = "outcome_original") |>
   step_impute_median(all_numeric_predictors()) |>
-  step_unknown(all_nominal_predictors()) |>
-  step_mutate(avg_order_amt = log(avg_order_amt)) |> # log-transform OUTCOME
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
+  step_novel(all_nominal_predictors()) |> # handle previously unseen levels
+  step_unknown(all_nominal_predictors()) |> # handle missing categorical value
   step_zv(all_predictors())
+
+reg_rec
 ```
 
 ::: {.callout-note title="Why log-transform the outcome but not the predictors?"}
-`avg_order_amt` is right-skewed — a few very large orders pull the distribution out. For regression trees, the split criterion is **RSS (Residual Sum of Squares)**: the algorithm finds the split that minimizes the total squared deviation from the group mean within each node.
+- `avg_order_amt` is right-skewed — a few very large orders pull the distribution out. For regression trees, the split criterion is **RSS (Residual Sum of Squares)**: the algorithm finds the split that minimizes the total squared deviation from the group mean within each node.
 
-Squared errors punish large outliers heavily — a single \$500 order can disproportionately influence which split is chosen. Log-transforming the outcome compresses the scale, reducing the leverage of outliers on split decisions and producing a more balanced tree.
+- Squared errors punish large outliers heavily — a single \$500 order can disproportionately influence which split is chosen. Log-transforming the outcome compresses the scale, reducing the leverage of outliers on split decisions and producing a more balanced tree.
 
-Note that predictions will be on the log scale — you need to `exp()` them to get back to dollar amounts.
+**Note** that predictions will be on the log scale — you need to **`exp()`** them to get back to dollar amounts.
 
-We do **not** log-transform the predictors because (as explained above) trees are rank-order invariant — monotone predictor transforms have no effect on splits.
+- We do **not** log-transform the predictors because (as explained above) trees are rank-order invariant — monotone predictor transforms have no effect on splits.
 :::
 
 ## Cross-Validation Folds
@@ -672,11 +690,13 @@ camp_folds
 
 ------------------------------------------------------------------------
 
-# Decision Trees
+# **Decision Trees**
 
-A decision tree is a non-parametric model that recursively partitions the predictor space into a set of rectangular, non-overlapping regions. For any new observation, the tree traces a path from top to bottom through a series of binary (yes/no) split questions (e.g., *"Is `cart_adds_30d`* $\ge 2$?") until it lands in a final region, where it assigns a prediction.
+A decision tree is a **non-parametric model** that recursively partitions the predictor space into a set of rectangular, non-overlapping regions. For any new observation, the tree traces a path from top to bottom through a series of binary (yes/no) split questions (e.g., *"Is `cart_adds_30d`* $\ge 2$?") until it lands in a final region, where it assigns a prediction.
 
-## Key Terminology
+## Conceptual Background
+
+### Key Terminology
 
 - **Root Node:** The topmost node in the tree representing the entire dataset before any splits occur.
 - **Internal (Decision) Node:** A node that splits into two child nodes based on a specific threshold of a single predictor variable.
@@ -687,11 +707,11 @@ A decision tree is a non-parametric model that recursively partitions the predic
 - **Splitting Rule:** The specific criterion (e.g., Gini impurity or RSS) used to determine the best variable and threshold for dividing data at a node.
 - **Pruning:** The process of trimming back fully-grown branches to reduce model complexity and prevent overfitting.
 
-## How Decision Trees Work
+### How Decision Trees Work
 
 A decision tree recursively splits the training data into regions by asking a series of binary questions: "Is `cart_adds_30d` ≥ 2?" → yes/no, then "Is `recency_days` \< 30?" → yes/no, and so on.
 
-### 1. Classification Trees (Gini Impurity)
+#### A. Classification Trees (Gini Impurity)
 
 Splits are selected to minimize the **Gini Impurity** ($G$) across the child nodes:
 
@@ -705,7 +725,7 @@ Where $\hat{p}_{mk}$ is the proportion of training observations in node $m$ belo
 - The algorithm chooses the split that yields the largest **reduction in weighted Gini impurity** when comparing the parent node to its two child nodes.
 :::
 
-### 2. Regression Trees (Residual Sum of Squares)
+#### B. Regression Trees (Residual Sum of Squares)
 
 For continuous outcomes, splits are selected to minimize the **Residual Sum of Squares (RSS)**:
 
@@ -713,7 +733,7 @@ $$\text{RSS} = \sum_{m=1}^{M} \sum_{i \in R_m} (y_i - \bar{y}_{R_m})^2$$
 
 Where $\bar{y}_{R_m}$ is the average response value of training points in region $R_m$.
 
-## Controlling Tree Complexity (Hyperparameters)
+### Controlling Tree Complexity (Hyperparameters)
 
 ::: {.callout-warning title="Why a single deep tree overfits"}
 - A fully grown tree will keep splitting until every leaf contains a single training observation — achieving 100% training accuracy but completely memorizing noise.
@@ -727,7 +747,8 @@ Unconstrained decision trees will continue splitting until every leaf is complet
 
 2.  **Minimum Split Size (`min_n`):** The minimum number of training observations required in a node for a split to be attempted.
 
-3.  **Cost-Complexity Parameter (`cost_complexity` /** $\alpha$): A penalty factor that penalizes larger trees. The algorithm minimizes: $$\text{Cost (or Tree Score)} = \text{Error} + \alpha \times (\text{Number of Leaves})$$
+3.  **Cost-Complexity Parameter (`cost_complexity` /** $\alpha$): A penalty factor that penalizes larger trees. The algorithm minimizes:
+    $$\text{Cost (or Tree Score)} = \text{Error} + \alpha \times (\text{Number of Leaves})$$
 
     - $\text{Cost}$ is Tree score.
     - $\text{Error}$ is SSR in Regression trees
@@ -744,7 +765,9 @@ Decision trees evaluate variables **one at a time** (monotonic splits), which gi
 - **Missing Values & Outliers:** Trees naturally accommodate non-linear relationships and are robust to severe feature outliers.
 :::
 
-## Fitting a Classification Tree
+## Clasification Tree
+
+### Fitting a Classification Tree
 
 ```{r tree-fit}
 tree_spec <- decision_tree(
@@ -762,7 +785,7 @@ tree_wf <- workflow() |>
 tree_fit <- fit(tree_wf, data = camp_train)
 ```
 
-## Visualizing the Tree
+### Visualizing the Tree
 
 ```{r tree-plot, fig.height=7, fig.width=12}
 tree_fit |>
@@ -787,100 +810,16 @@ Each node shows three numbers: the **predicted class** (yes/no), the **probabili
 The first few splits reveal the most important predictors — the algorithm chose them because they produce the largest Gini reduction.
 :::
 
-## Fit Output
+### Extracting the Fitted Tree
 
-```         
-> tree_fit |>
-+   extract_fit_engine()
-n= 3199 
-
-node), split, n, loss, yval, (yprob)
-      * denotes terminal node
-
-   1) root 3199 764 no (0.23882463 0.76117537)  
-     2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)  
-       4) recency_days< 26.5 356 147 yes (0.58707865 0.41292135)  
-         8) email_clicks_30d>=1.5 208  64 yes (0.69230769 0.30769231)  
-          16) site_visits_30d>=4.5 57   5 yes (0.91228070 0.08771930) *
-          17) site_visits_30d< 4.5 151  59 yes (0.60927152 0.39072848)  
-            34) channel_email>=0.5 58  11 yes (0.81034483 0.18965517)  
-              68) site_visits_30d>=1.5 38   3 yes (0.92105263 0.07894737) *
-              69) site_visits_30d< 1.5 20   8 yes (0.60000000 0.40000000)  
-               138) age< 43.5 9   1 yes (0.88888889 0.11111111) *
-               139) age>=43.5 11   4 no (0.36363636 0.63636364) *
-            35) channel_email< 0.5 93  45 no (0.48387097 0.51612903)  
-              70) freq_12mo>=3.5 32   8 yes (0.75000000 0.25000000) *
-              71) freq_12mo< 3.5 61  21 no (0.34426230 0.65573770)  
-               142) income>=40431 50  21 no (0.42000000 0.58000000)  
-                 284) avg_order_amt>=107.56 16   5 yes (0.68750000 0.31250000) *
-                 285) avg_order_amt< 107.56 34  10 no (0.29411765 0.70588235)  
-                   570) channel_social>=0.5 8   3 yes (0.62500000 0.37500000) *
-                   571) channel_social< 0.5 26   5 no (0.19230769 0.80769231) *
-               143) income< 40431 11   0 no (0.00000000 1.00000000) *
-         9) email_clicks_30d< 1.5 148  65 no (0.43918919 0.56081081)  
-          18) freq_12mo>=3.5 53  19 yes (0.64150943 0.35849057)  
-            36) age>=35.5 35   8 yes (0.77142857 0.22857143)  
-              72) discount_rate_seen>=0.075 28   4 yes (0.85714286 0.14285714) *
-              73) discount_rate_seen< 0.075 7   3 no (0.42857143 0.57142857) *
-            37) age< 35.5 18   7 no (0.38888889 0.61111111) *
-          19) freq_12mo< 3.5 95  31 no (0.32631579 0.67368421)  
-            38) avg_order_amt>=168.505 14   5 yes (0.64285714 0.35714286) *
-            39) avg_order_amt< 168.505 81  22 no (0.27160494 0.72839506)  
-              78) income>=39538.5 61  20 no (0.32786885 0.67213115)  
-               156) site_visits_30d>=4.5 18   8 yes (0.55555556 0.44444444) *
-               157) site_visits_30d< 4.5 43  10 no (0.23255814 0.76744186) *
-              79) income< 39538.5 20   2 no (0.10000000 0.90000000) *
-       5) recency_days>=26.5 433 146 no (0.33718245 0.66281755)  
-        10) cart_adds_30d>=2.5 105  49 yes (0.53333333 0.46666667)  
-          20) site_visits_30d>=4.5 36  10 yes (0.72222222 0.27777778)  
-            40) discount_rate_seen>=0.075 24   3 yes (0.87500000 0.12500000) *
-            41) discount_rate_seen< 0.075 12   5 no (0.41666667 0.58333333) *
-          21) site_visits_30d< 4.5 69  30 no (0.43478261 0.56521739)  
-            42) email_clicks_30d>=1.5 51  24 yes (0.52941176 0.47058824)  
-              84) freq_12mo>=1.5 41  16 yes (0.60975610 0.39024390)  
-               168) recency_days< 51.5 14   2 yes (0.85714286 0.14285714) *
-               169) recency_days>=51.5 27  13 no (0.48148148 0.51851852)  
-                 338) region_South>=0.5 8   1 yes (0.87500000 0.12500000) *
-                 339) region_South< 0.5 19   6 no (0.31578947 0.68421053) *
-              85) freq_12mo< 1.5 10   2 no (0.20000000 0.80000000) *
-            43) email_clicks_30d< 1.5 18   3 no (0.16666667 0.83333333) *
-        11) cart_adds_30d< 2.5 328  90 no (0.27439024 0.72560976)  
-          22) freq_12mo>=2.5 196  70 no (0.35714286 0.64285714)  
-            44) recency_days< 55.5 103  50 no (0.48543689 0.51456311)  
-              88) site_visits_30d>=2.5 77  33 yes (0.57142857 0.42857143)  
-               176) avg_order_amt>=62.905 68  26 yes (0.61764706 0.38235294)  
-                 352) recency_days>=51.5 7   0 yes (1.00000000 0.00000000) *
-                 353) recency_days< 51.5 61  26 yes (0.57377049 0.42622951)  
-                   706) avg_order_amt< 101.04 23   6 yes (0.73913043 0.26086957) *
-                   707) avg_order_amt>=101.04 38  18 no (0.47368421 0.52631579)  
-                    1414) loyalty_tier_3>=0.5 10   2 yes (0.80000000 0.20000000) *
-                    1415) loyalty_tier_3< 0.5 28  10 no (0.35714286 0.64285714) *
-               177) avg_order_amt< 62.905 9   2 no (0.22222222 0.77777778) *
-              89) site_visits_30d< 2.5 26   6 no (0.23076923 0.76923077) *
-            45) recency_days>=55.5 93  20 no (0.21505376 0.78494624)  
-              90) avg_order_amt>=153.235 20   9 no (0.45000000 0.55000000)  
-               180) avg_order_amt< 177.875 10   3 yes (0.70000000 0.30000000) *
-               181) avg_order_amt>=177.875 10   2 no (0.20000000 0.80000000) *
-              91) avg_order_amt< 153.235 73  11 no (0.15068493 0.84931507) *
-          23) freq_12mo< 2.5 132  20 no (0.15151515 0.84848485) *
-     3) cart_adds_30d< 1.5 2410 409 no (0.16970954 0.83029046)  
-       6) recency_days< 27.5 1079 276 no (0.25579240 0.74420760)  
-        12) freq_12mo>=3.5 394 164 no (0.41624365 0.58375635)  
-          24) cart_adds_30d>=0.5 170  77 yes (0.54705882 0.45294118)  
-            48) site_visits_30d>=4.5 30   6 yes (0.80000000 0.20000000) *
-            49) site_visits_30d< 4.5 140  69 no (0.49285714 0.50714286)  
-              98) age>=52.5 27   8 yes (0.70370370 0.29629630)  
-               196) income>=64764.5 16   2 yes (0.87500000 0.12500000) *
-               197) income< 64764.5 11   5 no (0.45454545 0.54545455) *
-              99) age< 52.5 113  50 no (0.44247788 0.55752212)  
-               198) site_visits_30d>=2.5 58  26 yes (0.55172414 0.44827586)  
-                 396) freq_12mo>=4.5 36  12 yes (0.66666667 0.33333333)  
-                   792) email_clicks_30d>=1.5 15   2 yes (0.86666667 0.13333333) *
+```{r}
+tree_fit |>
+  extract_fit_engine()
 ```
 
-### Node 1: The Root Node (The Starting Point)
+#### Node 1: The Root Node (The Starting Point)
 
-``` texinfo
+``` r
 1) root 3199 764 no (0.23882463 0.76117537)
 ```
 
@@ -894,13 +833,13 @@ node), split, n, loss, yval, (yprob)
 
 - **`(0.23882463 0.76117537)` (`yprob`)**: The proportion of classes in this node:
 
-  - Class 1 (e.g., `"yes"`): **23.88%**
+  - Class 1 (e.g., `"yes"`): **23.88%** ($764 / 3,199 \approx 0.2388$)
 
-  - Class 2 (e.g., `"no"`): **76.12%** ($3,199 - 764 = 2,435$ actual `"no"` cases; $764 / 3,199 \approx 0.2388$).
+  - Class 2 (e.g., `"no"`): **76.12%** ($3,199 - 764 = 2,435$ actual `"no"` cases; $2,435 / 3,199 \approx 0.7612$ ).
 
-### Node 2: The First Branch (Child Node)
+#### Node 2: The First Branch (Child Node)
 
-```         
+``` r
 2) cart_adds_30d>=1.5 789 355 no (0.44993663 0.55006337)
 ```
 
@@ -920,7 +859,7 @@ node), split, n, loss, yval, (yprob)
 
   - Class 2 (`"no"`): Decreased from **76.12%** $\rightarrow$ 55.01%
 
-### Executive Interpretation
+#### Executive Interpretation
 
 > *"At the root level (3,199 total customers), about 76.1% of customers are class 'no'. The tree selects `cart_adds_30d` as its very first splitting variable. For customers with at least 2 cart additions (`cart_adds_30d >= 1.5`), the probability of being in class 'yes' nearly doubles from 23.9% to 45.0%."*
 
@@ -932,7 +871,7 @@ In `rpart` tree printouts, child nodes follow a binary numbering convention:
 - Node $N$'s right child is $2N + 1$ (e.g., Node 1 $\rightarrow$ **Node 3** for `cart_adds_30d < 1.5`).
 :::
 
-## Reading Business Rules from the Tree
+### Reading Business Rules from the Tree
 
 ```{r tree-rules}
 # Extract rules from the tree as text
@@ -942,7 +881,82 @@ tree_fit |>
   rpart.plot::rpart.rules(cover = TRUE, style = "tall")
 ```
 
-## Classification Tree Performance
+#### How to Read a Single Rule Block
+
+Every block in the output follows this exact template:
+
+``` r
+..y is [PREDICTION] with cover [SIZE OF SEGMENT] when
+    [Condition 1]
+    [Condition 2]
+    [Condition 3]
+```
+
+- `y is ...`: The target outcome the tree is predicting (e.g., probability of purchasing). Higher numbers mean higher probability.
+
+- `cover ...`: How large this segment is.
+
+- `cover 31%` means 31% of all your data falls into this exact bucket.
+
+- `cover 0%` means less than 0.5% (a tiny fraction) fell here.
+
+- `when ...`: The exact behavior or demographics required to place a customer into this segment. All conditions in a block must be true at the same time.
+
+::: callout-tip
+#### Decision Tree Analysis: Key Drivers of Purchase Behavior
+
+To identify the primary behavioral patterns driving customer conversion, an `rpart` decision tree model was evaluated across the dataset using the target variable `Purchased` (1 = Purchase, 0 = No Purchase).
+
+**Segment A: Passive Recent Engagers (31% of all customers)**
+
+``` r
+..y is 0.93 with cover 31% when
+    cart_adds_30d < 1.5
+    recency_days >= 28
+    email_clicks_30d < 1.5
+```
+
+- Purchase Likelihood: 93%
+- Volume: 31% of your entire customer base
+- *Interpretation*: This is your core conversion engine. Customers who haven't needed to add items to their cart recently or click marketing emails because they are already established, returning buyers.
+
+**Segment B: Low-Threshold Browsers (11% of all customers)**
+
+``` r
+..y is 0.91 with cover 11% when
+    cart_adds_30d < 1.5
+    recency_days < 28
+    freq_12mo < 3.5
+    site_visits_30d < 3.5
+    email_clicks_30d < 1.5
+```
+
+- Purchase Likelihood: 91%
+- Volume: 11% of your customer base
+- *Interpretation*: Recent visitors with lower overall engagement metrics who still convert at extremely high rates without needing heavy promotional pushing.
+
+**Segment C: High Intent / High Friction (Cart Abandoners)**
+
+``` r
+..y is 0.08 with cover 1% when
+    cart_adds_30d >= 1.5
+    recency_days < 27
+    site_visits_30d is 1.5 to 4.5
+    email_clicks_30d >= 1.5
+    channel_email >= 0.5
+```
+
+- Purchase Likelihood: Only 8% (92% non-conversion rate!)
+- *Interpretation*: These users actively add items to their cart (cart_adds_30d \>= 1.5), visit the site, and click email links, yet fail to convert. This indicates high intent but potential friction at checkout (e.g., unexpected shipping costs or payment issues).
+:::
+
+### Classification Tree Performance
+
+```{r test-set-log-transform}
+# Add log_avg_order_amt to your test set
+camp_test <- camp_test |>
+  mutate(log_avg_order_amt = log(avg_order_amt))
+```
 
 ```{r tree-metrics}
 tree_preds <- augment(tree_fit, new_data = camp_test)
@@ -959,7 +973,7 @@ conf_mat(tree_preds, truth = purchased, estimate = .pred_class) |>
   autoplot(type = "heatmap")
 ```
 
-## The Overfitting Problem — Shallow vs. Deep Tree
+### The Overfitting Problem — Shallow vs. Deep Tree
 
 ```{r tree-overfit}
 # Compare a very deep tree vs. a pruned tree
@@ -1095,7 +1109,18 @@ This guarantees that for every value of $\alpha$, there exists a unique optimal 
 
 Because $\alpha$ is a hyperparameter, its optimal value cannot be determined from training data alone. We use $K$-Fold Cross-Validation:
 
-Full Dataset ──► \[Grow Large Tree T₀\] ──► \[Generate Sequence of Subtrees\] │ 10-Fold CV ──► \[Compute CV-RMSE for each α\] ◄─────────┘ │ ▼ \[Select Best α / Cₚ\]
+```{mermaid}
+flowchart TD
+    A[Full Dataset] --> B[Grow a Large<br>Regression Tree T₀]
+    B --> C[Generate Pruned Subtrees<br>for Different Cₚ Values]
+    C --> D[10-Fold<br>Cross-Validation]
+    D --> E[Compare Cross-Validated<br>Error: xerror]
+    E --> F{Selection Rule}
+    F --> G[Minimum-Error Tree]
+    F --> H[1-SE Tree:<br>Simpler Tree Within 1 SE]
+    G --> I[Prune T₀]
+    H --> I
+```
 
 1.  **Cross-Validation Split:** Divide the training data into $K$ folds (e.g., $K = 10$).
 2.  **Evaluate Subtrees:** For each candidate value of $\alpha$, fit the pruned tree on $K-1$ folds and compute the Cross-Validated Root Mean Squared Error ($\text{RMSE}_{\text{CV}}$) on the validation fold.
@@ -1110,16 +1135,16 @@ Full Dataset ──► \[Grow Large Tree T₀\] ──► \[Generate Sequence of
 ```{r reg-tree-fit}
 # 1. Fixed Model Specification
 reg_tree_spec <- decision_tree(
-  cost_complexity = 0.001, # = tune() for tuning alpha or Cp
-  tree_depth = 8,
-  min_n = 25
+  cost_complexity = 0.001, # typical range: 0.0001 to 0.1; fixed Cp; later replaced with tune()
+  tree_depth = 8, # typical range: 2 to 10
+  min_n = 25 # typical range: 10 to 100
 ) |>
   set_engine("rpart") |>
   set_mode("regression")
 
 # 2. Workflow Setup
-reg_tree_wf <- workflow() |> 
-  add_recipe(reg_rec) |> 
+reg_tree_wf <- workflow() |>
+  add_recipe(reg_rec) |>
   add_model(reg_tree_spec)
 
 # 3. Fit Model
@@ -1133,8 +1158,6 @@ reg_tree_preds <- augment(reg_tree_fit, new_data = camp_test) |>
   )
 
 # Baseline Performance Metrics
-# Note: actual avg_order_amt in test set is on the original dollar scale
-# but the recipe log-transformed it during training —
 # we evaluate on the original scale for interpretability
 baseline_tree_metrics <- reg_tree_preds |>
   summarise(
@@ -1162,11 +1185,16 @@ reg_tree_fit |>
 Rather than guessing the best value for `cost_complexity` ($\alpha$ / $C_p$), we can mark it as `tune()` and use **10-Fold Cross-Validation** on the training set to find the optimal parameter value automatically.
 
 ```{r}
+camp_train |>
+  filter(is.na(log_avg_order_amt))
+```
+
+```{r}
 # 1. Model Specification with Tuneable Cost-Complexity
 tune_tree_spec <- decision_tree(
-  cost_complexity = tune(), # Mark cost_complexity for tuning
-  tree_depth = 8,
-  min_n = 25
+  cost_complexity = tune(), # tune Cp
+  tree_depth = 8, # held fixed for comparison
+  min_n = 25 # held fixed for comparison
 ) |>
   set_engine("rpart") |>
   set_mode("regression")
@@ -1182,8 +1210,8 @@ folds <- vfold_cv(camp_train, v = 10)
 
 # 4. Define Grid of Candidate Alpha (Cp) Values
 cp_grid <- grid_regular(
-  cost_complexity(range = c(-5, -2)), # Evaluates 10^-4 to 10^-1
-  levels = 20
+  cost_complexity(range = c(-4, -1)), # Evaluates 10^-4 to 10^-1
+  levels = 20 # 20 candidate values of Cp (alpha) to evaluate
 )
 
 # 5. Execute 10-Fold Cross-Validation
@@ -1192,7 +1220,7 @@ tune_results <- tune_grid(
   resamples = folds,
   grid = cp_grid,
   metrics = metric_set(rmse, rsq, mae),
-  control = control_grid(verbose = FALSE, allow_par = TRUE) # optional
+  control = control_grid(verbose = FALSE, allow_par = TRUE) # allow parallel processing if a backend is registered
 )
 
 # 6. Plot the Pruning / Tuning Curve
@@ -1204,7 +1232,11 @@ autoplot(tune_results) +
   )
 ```
 
-::: {.callout-note title="Teaching Moment for Codebook"}
+::: {.callout-note title="Warning in Console Output"}
+```         
+- Warning(s) x10: A correlation computation is required, but `estimate` is constant and has 0 standard dev...
+```
+
 When cost_complexity is set too high, `rpart` prunes the tree down to a single root node that predicts a constant mean ($\bar{y}$). As a result, $R^2$ cannot compute a standard deviation and returns NA for extreme $C_p$ values.
 :::
 
@@ -1216,12 +1248,12 @@ We select the best `cost_complexity` value using the **1-Standard Error rule** (
 # 1. Select Best Cp using the 1-SE Rule
 
 best_cp_1se <- select_by_one_std_err(
-  tune_results, 
-  metric = "rmse", 
+  tune_results,
+  metric = "rmse",
   desc(cost_complexity) # prefer larger cp (simpler tree)
 )
 
-best_cp <- select_best(tune_results, metric = "rmse")
+select_best(tune_results, metric = "rmse")
 
 cat("Chosen Cost-Complexity (Cp):", best_cp_1se$cost_complexity, "\n")
 
@@ -1246,17 +1278,17 @@ tuned_tree_metrics <- final_tree_preds |>
     r2 = cor(pred_dollar, actual_dollar, use = "complete.obs")^2
   )
 
-baseline_tree_metrics |> 
-  mutate(model = "Baseline Tree Metrics") |> 
-  bind_rows(tuned_tree_metrics |> 
-              mutate(model = "Tuned Tree Metrics")
-            ) |> 
+baseline_tree_metrics |>
+  mutate(model = "Baseline Tree Metrics") |>
+  bind_rows(
+    tuned_tree_metrics |>
+      mutate(model = "Tuned Tree Metrics")
+  ) |>
   relocate(model, .before = 1)
-
 ```
 
-::: {.callout-warning title="Teaching Moment: Why Did the 'Tuned' Model Have Worse Test Metrics?"}
-Looking at the test set metrics, the baseline manual tree ($RMSE = 49.1$) appears to outperform the CV-tuned tree ($RMSE = 51.4$). Why did automated tuning give us a "worse" result?
+::: {.callout-warning title="Why Did the 'Tuned' Model Have Worse Test Metrics?"}
+Looking at the test set metrics, the baseline manual tree ($RMSE = 50.1$) appears to outperform the CV-tuned tree ($RMSE = 52.1$). Why did automated tuning give us a "worse" result?
 
 1.  **Sampling Variation in the Test Set:** Cross-validation estimates performance across 10 different folds of the training data. The holdout test set is a single sample. By chance, the manual model's extra complexity happened to fit the test set's specific data points better.
 
@@ -1265,17 +1297,237 @@ Looking at the test set metrics, the baseline manual tree ($RMSE = 49.1$) appear
 3.  **Manual Guesses Can Be Lucky:** A manually chosen $C_p = 0.001$ happened to work well here, but without cross-validation, we would have no principled way of knowing whether that guess was safe or severely overfitted.
 :::
 
+### Visualizing the Final Tuned / Pruned Regression Tree
+
 ```{r}
 # Visualize the Tuned / Pruned Tree
 final_tree_fit |>
   extract_fit_engine() |>
   rpart.plot(
-    type = 4,
-    extra = 1,
+    type = 4, #split condition is shown beside each branch
+    extra = 1, #displays the number of observations in the node
     main = "Regression Tree — Average Order Amount (CV Tuned)",
     box.palette = "Blues"
   )
 ```
+
+### Printing out the Final Regression Tree and its Node Statistics
+
+- The printout from below code chunk shows the final regression tree fit on the training data. It reports the number of observations in each node, the deviance (a measure of within-node variation), and the predicted value for `log(avg_order_amt)`.
+
+- This print out should have the same informaton as the **visual tree diagram**, but it is often easier to read the exact numbers in this format.
+
+```{r regression-tree-fit-engine}
+final_tree_fit |>
+  extract_fit_engine()
+```
+
+#### How to Interpret the Final Regression Tree
+
+- For every node, rpart reports the `node number`, `splitting rule`, `number of observations`, `deviance`, and `fitted value`.
+
+- 
+
+  - denotes terminal node
+
+- The columns mean:
+
+- **node**: the node’s identification number
+
+- split: the rule defining which observations enter that node
+
+- n: the number of observations in that node
+
+- **deviance**: the remaining within-node variation in the outcome
+
+- **yval**: the node’s predicted outcome value ($\hat{y}$), which is the average of all observations in that node.
+
+- **Node 1**
+
+  ```         
+  1) root 3053 616.7939000 4.552768  
+  ```
+
+  - **Node 1**: The root node contains all 3,053 observations in the training set.
+  - The average predicted value for `log(avg_order_amt)` is $4.55$ (on the log scale: exp(4.55) = $94.63$).
+  - The deviance of $616.79$ indicates the total variation in the outcome variable at this node.
+
+::: callout-tip
+- The regression tree was fitted after applying a natural-log transformation to `avg_order_amt`. Therefore, the yval displayed at each node is a prediction of `log(avg_order_amt)`, not a dollar amount.
+
+- To express a terminal-node prediction on the original scale, apply the exponential function. For example, a terminal-node value of 4.214 corresponds to approximately `exp(4.214) = $67.62`.
+
+- To make a prediction, begin at the root and follow the split conditions until reaching a node marked with an asterisk.
+
+- Because categorical predictors were converted to one-hot dummy variables, conditions such as `device_desktop < 0.5` mean “not desktop,” while `device_desktop >= 0.5` means “desktop.”
+
+- For integer count variables, a condition such as `cart_adds_30d < 1.5` means zero or one cart addition.
+:::
+
+### Terminal Nodes Statistics and Business Interpretation
+
+```{r regression-tree-rules}
+final_tree_fit |>
+  extract_fit_engine() |>
+  rpart.plot::rpart.rules(cover = TRUE, style = "tall", roundint = FALSE)
+```
+
+The final regression tree identifies **device type**, **loyalty tier**, and **acquisition channel** as the primary variables defining customer segments with different predicted average order amounts.
+
+Because `avg_order_amt` was log-transformed before fitting the model, the terminal-node predictions are reported on the log scale. To return them approximately to the original dollar scale, apply the exponential function:
+
+$$\widehat{\text{Order Amount}} =\exp\left(\widehat{\log(\text{Order Amount})}\right)$$
+The approximate back-transformed predictions are:
+
+| Log-scale prediction | Approximate order amount |
+|---------------------:|-------------------------:|
+|                  4.3 |                     \$74 |
+|                  4.5 |                     \$90 |
+|                  4.7 |                    \$110 |
+|                  4.9 |                    \$134 |
+
+::: {.callout-note title="Interpreting the Back-Transformed Predictions"}
+Exponentiating a log-scale prediction returns an approximate typical order amount in dollars. Because of retransformation bias, it should not necessarily be interpreted as an unbiased estimate of the arithmetic mean order amount.
+:::
+
+#### 1. Desktop Customers Tend to Place Higher-Value Orders
+
+The clearest overall pattern is the difference between desktop customers and mobile or tablet customers.
+
+For Bronze and Silver loyalty members:
+
+- Mobile or tablet users acquired through display, paid search, or social channels have a predicted order amount of approximately \$74.
+
+- Desktop users acquired through display or social channels have a predicted order amount of approximately \$90.
+
+- Desktop users acquired through direct, email, or paid search channels have a predicted order amount of approximately \$110.
+
+The highest-value terminal node also consists of desktop users:
+
+> **Desktop customers whose loyalty status is Gold, Platinum, new, or unknown have a predicted order amount of approximately \$134.**
+
+**Business implication**: Desktop shopping may be associated with more deliberate or higher-value purchases. The company should investigate whether mobile customers experience checkout friction, weaker product presentation, or fewer opportunities for cross-selling and product bundling.
+
+This finding is predictive rather than causal. It does not prove that moving a customer from mobile to desktop would increase spending. Device type may instead reflect purchase context, customer characteristics, or shopping intent.
+
+#### 2. Loyalty Status Is Strongly Associated with Customer Value
+
+Higher loyalty tiers are generally associated with larger predicted order amounts.
+
+Among mobile or tablet customers acquired through direct or email channels:
+
+- Bronze or Silver customers have a predicted order amount of approximately \$90.
+- Gold, Platinum, new, or unknown customers have a predicted order amount of approximately \$110.
+
+Among desktop customers, the Gold, Platinum, new, or unknown group forms the highest-value segment, with a predicted order amount of approximately \$134.
+
+**Business implication**: Loyalty status appears useful for customer segmentation, personalization, and offer design. Higher-value loyalty segments may be appropriate targets for premium products, product bundles, early access, personalized recommendations, and retention campaigns.
+
+::: {.callout-warning title="Investigate the New and Unknown Categories"}
+The tree groups new and unknown loyalty statuses with Gold and Platinum customers. This does not necessarily mean that new or missing-tier customers behave like highly loyal customers in general. It means only that, within this branch of the tree, their observed order amounts were similar enough for the model to group them together.
+
+These categories should be investigated separately before designing a marketing campaign.
+:::
+
+#### 3. Direct and Email Channels Are Associated with Higher Order Values
+
+Direct and email traffic generally appears in higher-value terminal nodes than display or social traffic.
+
+For mobile or tablet Bronze and Silver customers:
+
+- Display, paid search, or social channels correspond to approximately \$74.
+- Direct or email channels correspond to approximately \$90.
+
+For desktop Bronze and Silver customers:
+
+- Display or social channels correspond to approximately \$90.
+- Direct, email, or paid search channels correspond to approximately \$110.
+
+**Business implication**: Direct and email channels may attract customers with stronger purchase intent or an existing relationship with the brand. Email campaigns could emphasize higher-value products, bundles, replenishment reminders, loyalty benefits, and personalized recommendations.
+
+This is also an associative finding. Direct traffic may represent customers who already know and trust the brand rather than proving that the direct channel itself causes higher spending.
+
+#### 4. The Largest Low-Value Segment Represents an Important Opportunity
+
+The largest terminal node covers approximately 25% of customers:
+
+> Mobile or tablet users who are Bronze or Silver loyalty members and were acquired through display, paid search, or social channels have a predicted order amount of approximately \$74.
+
+This is both the largest customer segment and the segment with the lowest predicted order amount.
+
+**Business implication**: Because this segment contains approximately one-quarter of the observations, even a modest improvement in its average order value could produce a meaningful overall business impact.
+
+Possible actions include:
+
+- improving mobile landing pages and checkout usability;
+- offering product bundles or quantity discounts;
+- using free-shipping thresholds to encourage larger baskets;
+- aligning advertising creative with higher-value products;
+- retargeting customers who demonstrate stronger engagement; and
+- encouraging loyalty-program enrollment or progression.
+
+#### 5. High-Value Desktop Customers Are Smaller but Strategically Attractive
+
+The highest-value terminal node covers approximately 8% of customers:
+
+> **Desktop users whose loyalty status is Gold, Platinum, new, or unknown have a predicted order amount of approximately \$134.**
+
+Although this segment is smaller than the broad mobile segments, its predicted order value is substantially higher.
+
+**Business implication**: This group may justify more personalized treatment, including premium merchandising, VIP communications, exclusive offers, early product access, and higher allowable acquisition or retention costs.
+
+#### 6. The Tree Reveals Interactions Rather Than Isolated Effects
+
+The results should not be summarized simply as:
+
+> Desktop is better.
+
+or:
+
+> Email is better.
+
+The predicted order amount depends on combinations of customer characteristics.
+
+For example, paid search appears in both:
+
+- the lowest-value mobile or tablet Bronze and Silver segment; and
+- the higher-value desktop Bronze and Silver segment.
+
+Therefore, the relationship between paid search and order value depends on device type and loyalty status.
+
+This is one of the main advantages of decision trees: they reveal conditional relationships and interactions that may be difficult to communicate through a single overall average or regression coefficient.
+
+#### Overall Business Interpretation
+
+> The regression tree identifies device type, loyalty tier, and acquisition channel as the primary dimensions of customer-value segmentation. Desktop customers generally have higher predicted order amounts than mobile or tablet customers, particularly among higher loyalty tiers. Direct and email traffic also tends to be associated with higher-value orders than display or social traffic.
+
+The largest business opportunity appears to be the mobile or tablet Bronze and Silver segment acquired through display, paid search, or social channels. This group represents approximately one-quarter of customers but has the lowest predicted order amount. The company should investigate improvements to the mobile shopping experience, loyalty development, channel-specific merchandising, and basket-building strategies.
+
+At the same time, the smaller high-value desktop segment may warrant premium retention and personalization efforts.
+
+::: {.callout-important title="Important Limitations"}
+These results describe predictive associations in the available data. They do not establish that device type, loyalty tier, or acquisition channel causes a change in average order amount.
+
+Small segments, data-quality issues, and omitted variables should also be considered before making major business decisions.
+:::
+
+::: {.callout-tip title="Reading the Coverage Percentages"}
+The terminal-node coverage percentages add to approximately 99% rather than exactly 100% because `rpart.rules()` rounds the displayed percentages.
+:::
+
+#### Executive Interpretation of the Final Regression Tree
+
+> **Tasks**: Identify three meaningful customer segments from the final regression tree. For each segment, describe the decision path, convert the terminal-node prediction to the original dollar scale, explain the possible business meaning, and recommend one practical action. Also note any limitations related to sample size, causality, or model uncertainty.
+
+- **Device is the first and most important segmentation variable**. Desktop users generally have higher predicted order amounts than non-desktop users.
+
+- **Email appears valuable in several branches.** For example, higher-income non-desktop email users with at least two cart additions have relatively high predicted order amounts.
+
+- **Recent cart activity is a strong buying-intent signal.** Customers with at least two cart additions often receive higher predictions than otherwise similar customers with zero or one.
+
+- **Loyalty status helps distinguish high-value segments.** Tier 4 customers tend to have higher predicted outcomes in the non-desktop email branch.
+
+- **Some segments are small and should be treated cautiously.** The social-channel branch with fewer than two annual purchases contains only nine observations, so that result may be unstable.
 
 ------------------------------------------------------------------------
 
@@ -1293,7 +1545,9 @@ final_tree_fit |>
 
 ------------------------------------------------------------------------
 
-# Random Forests
+# Part 2: Ensembles {.unnumbered style="font-size: 28pt; font-weight: bold; color: #f1861b;"}
+
+# **Random Forests**
 
 ## Conceptual Overview
 
@@ -1339,7 +1593,7 @@ Full Dataset (e.g., 1,000 rows)
   (Full decision flowchart)     (Full decision flowchart)     (Full decision flowchart)
 ```
 
-## 1. From One Tree to Many: Bagging (Bootstrap Aggregating)
+### From One Tree to Many: Bagging (Bootstrap Aggregating)
 
 A single decision tree is notorious for having **high variance**: small perturbations in the training data can alter the root split and result in a completely different tree structure.
 
@@ -1365,7 +1619,7 @@ To overcome this instability, we turn to an ensemble method called **Bagging (Bo
 - For Classification: Rather than averaging continuous values, each tree votes for a discrete class label, and $\hat{f}_{\text{bag}}(x)$ represents the majority vote (or the average predicted probability across all $B$ trees).
 :::
 
-### Why Bagging Works: The Mathematics of Variance Reduction
+#### Why Bagging Works: The Mathematics of Variance Reduction
 
 If we have $B$ independent and identically distributed (i.i.d.) random variables each with variance $\sigma^2$, the variance of their average is:
 
@@ -1389,7 +1643,7 @@ As $B \to \infty$, the second term drops to zero, but the first term ($\rho \sig
 
 ------------------------------------------------------------------------
 
-## 2. De-Correlating Trees: The Random Forest Breakthrough
+### De-Correlating Trees: The Random Forest Breakthrough
 
 If a dataset has one or two dominant predictors (e.g., `income` or `recency_days`), **every single bagged tree will select that dominant predictor for its root split**. Consequently, all trees in the bagged ensemble look almost identical ($\rho \approx 1$).
 
@@ -1406,18 +1660,21 @@ By forcing trees to ignore dominant predictors at many nodes, feature randomness
 
 ------------------------------------------------------------------------
 
-## 3. Out-of-Bag (OOB) Error: "Free" Validation
+### Out-of-Bag (OOB) Error: "Free" Validation
 
 Because each bootstrap sample selects approximately $63.2\%$ of unique observations, the remaining $\sim 36.8\%$ of data points are left out for that specific tree. These are called **Out-of-Bag (OOB)** observations.
 
-Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree b └──► \[ Out-of-Bag (OOB) (\~36.8%) \] ──► Validate Tree b
+``` r
+Full Dataset (N) ──► [ Bootstrap Sample (~63.2%) ] ──► Train Tree b 
+                └──► [ Out-of-Bag (OOB) (~36.8%) ] ──► Validate Tree b
+```
 
 - For each observation $i$, we can predict its value using **only the trees where observation** $i$ was OOB.
 - Averaging these predictions yields the **OOB Error Rate**, which serves as an unbiased estimate of test error **without needing** $K$-fold cross-validation or a separate validation split.
 
 ------------------------------------------------------------------------
 
-## 4. Key Hyperparameters in `tidymodels` (`rand_forest`)
+### Key Hyperparameters in `tidymodels` (`rand_forest`)
 
 | Math Symbol | Concept | `tidymodels` Argument | Default (`ranger` engine) | Practical Guidance |
 |---------------|---------------|---------------|---------------|---------------|
@@ -1425,16 +1682,17 @@ Full Dataset (N) ──► \[ Bootstrap Sample (\~63.2%) \] ──► Train Tree
 | $B$ | Number of trees | `trees` | $500$ | More is generally better (does not overfit); set high enough for error to stabilize (e.g., $500–1000$). |
 | $n_{\text{min}}$ | Min node size for split | `min_n` | $1$ (Class) / $5$ (Reg) | Controls tree depth/growth stopping. Lower values $\to$ deeper trees. |
 
-------------------------------------------------------------------------
-
-## 5. Feature Importance: Peeking Inside the "Black Box"
+### Feature Importance: Peeking Inside the "Black Box"
 
 While individual decision trees produce simple flowchart diagrams, Random Forests aggregate hundreds of trees, sacrificing direct diagram visualizability. To restore interpretability, we measure **Variable Importance**:
 
 1.  **Mean Decrease in Impurity (MDI / Gini Importance):** Sums the total reduction in Gini impurity (or RSS) brought about by splits on feature $X_j$, averaged across all trees.
+
 2.  **Permutation Importance (OOB Drop):** Randomly shuffles (scrambles) feature $X_j$ in the OOB data and measures how much predictive accuracy degrades. Larger drops in accuracy indicate higher feature importance.
 
-## Fitting a Random Forest with 10 Fold CV
+We can also use SHAP Values (Shapley Additive exPlanations) to quantify each feature's contribution to individual predictions; A brief introduction to SHAP is provided towards the end of the codebook (@sec-explaining-models).
+
+## Random Forest with 10 Fold CV
 
 ### Fitting a Random Forest
 
@@ -1467,13 +1725,13 @@ set.seed(2025)
 rf_grid <- grid_regular(
   mtry(range = c(3, 10)),
   min_n(range = c(5, 30)),
-  levels = 3
+  levels = 3 #3 evenly spaced values for the two hyperparameters, leading to 3 x 3 = 9 total combinations
 )
 
 # 5. Tune Grid
 rf_tune_results <- tune_grid(
   rf_wf,
-  resamples = camp_folds,
+  resamples = camp_folds, # 10-fold CV x 9 hyperparameter combinations = 90 total tree models
   grid = rf_grid,
   metrics = metric_set(roc_auc, accuracy)
 )
@@ -1486,7 +1744,6 @@ stopCluster(cl)
 autoplot(rf_tune_results) +
   labs(title = "Random Forest Tuning — AUC Across mtry and min_n") +
   theme_minimal(base_size = 11)
-
 ```
 
 ```{r rf-best}
@@ -1523,9 +1780,11 @@ rf_tune_results |>
 ```
 
 ::: {.callout-note title="Interpreting mtry"}
-A small `mtry` forces each tree to consider fewer predictors — trees become more diverse (less correlated) but individually weaker. A large `mtry` approaches bagging (all predictors available at each split) — trees are stronger individually but more correlated with each other.
+- A small `mtry` forces each tree to consider fewer predictors — trees become more diverse (less correlated) but individually weaker.
 
-The optimal `mtry` balances individual tree quality against ensemble diversity. With \~15 predictors in this dataset, `mtry` values between 3 and 8 typically work best.
+- A large `mtry` approaches *bagging* (all predictors available at each split) — trees are stronger individually but more correlated with each other.
+
+The optimal `mtry` balances individual tree quality against ensemble diversity. With \~15 predictors in this dataset, `mtry` values between **3 and 8** typically work best.
 :::
 
 ### Out-of-Bag (OOB) Error
@@ -1548,9 +1807,13 @@ rf_tune_results |>
 ```
 
 ::: {.callout-note title="What is OOB error?"}
-Each bootstrap sample in a random forest leaves out approximately **37% of the training observations** (observations not selected in that particular sample). These *out-of-bag* observations can be used to evaluate each tree without a separate validation set — the OOB error is essentially a free cross-validation estimate computed during training.
+- Each bootstrap sample in a random forest leaves out approximately **37% of the training observations** (observations not selected in that particular sample).
 
-OOB error tends to be slightly pessimistic compared to CV (because each tree only uses \~63% of the data) but is remarkably accurate and much faster to compute. For large forests and large datasets, OOB can replace CV entirely.
+- These *out-of-bag* observations can be used to evaluate each tree without a separate validation set — the OOB error is essentially a free cross-validation estimate computed during training.
+
+- OOB error tends to be slightly pessimistic compared to CV (because each tree only uses \~63% of the data) but is remarkably accurate and much faster to compute.
+
+- \*\* For large forests and large datasets, OOB can replace CV entirely\*\*.
 :::
 
 ### Variable Importance
@@ -1576,15 +1839,19 @@ The `ranger` engine supports two importance measures:
 
 **Permutation importance** (what we use here): for each variable, randomly shuffle its values across all test observations and measure how much prediction accuracy drops. A variable that is truly important will cause a large accuracy drop when shuffled; a noise variable will cause little change. This is more reliable but slower to compute.
 
-We use `importance = "permutation"` in the engine call for this reason — it gives a fairer comparison across predictors with different scales and cardinalities.
+- We use `importance = "permutation"` in the engine call for this reason — it gives a fairer comparison across predictors with different scales and cardinalities.
 :::
+
+**Interpretation of Variable Importance**: The variable importance plot shows which features are most influential in the Random Forest's predictions. The higher the importance score, the more critical that feature is for accurate predictions.
+
+- For example, knowing `cart_adds_30` is the #1 most important feature tells us it strongly impacts predictions, but it doesn't show whether Gold status increases or decreases the likelihood of purchase. Pair this with **SHAP** or **partial dependence plots** to explain the direction of the effect.
 
 ### Model Comparison: Single Tree vs. Random Forest on Prediction Performance
 
 | Metric | Single Decision Tree | Random Forest Ensemble Tuned with 10F CV | Improvement |
 |------------------|------------------|-------------------|------------------|
-| **Accuracy** | 0.774 | **0.808** | +4.4% |
-| **ROC AUC** | 0.761 | **0.805** | +5.8% |
+| **Accuracy** | 0.774 | **0.805** | +4.4% |
+| **ROC AUC** | 0.761 | **0.799** | +5.8% |
 
 ::: {.callout-tip title="Why Random Forest is Superior?"}
 By combining 500 decorrelated trees via **bagging** and **feature randomness (`mtry`)**, the Random Forest successfully reduced model variance, yielding a significantly higher ROC AUC on holdout test data compared to any individual decision tree.
@@ -1597,16 +1864,21 @@ By combining 500 decorrelated trees via **bagging** and **feature randomness (`m
 - **Alternative?** For massive datasets where running 10-Fold CV across a hyperparameter grid takes hours (or days), you can skip $K$-fold CV entirely. You can evaluate candidate models using their built-in **OOB Error**, which requires fitting each candidate forest **only once** instead of 10 times!
 
 ::: {.callout-tip title="Summary"}
-In the previous code, 10-Fold CV was used to search for the best `mtry` and `min_n`, while OOB error was calculated inside the single winning forest as a fast, built-in validation check. Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
+- In the previous code, 10-Fold CV was used to search for the best combinations of `mtry` and `min_n` (3 x 3 = 9), leading to 90 forests.
+
+- On the other hand, **OOB error** was calculated inside the single winning forest as a fast, built-in validation check.
+
+- Both give nearly identical estimates of performance, but OOB requires a fraction of the computing power!
 :::
 
-## Fitting Random Forest with OBB Tuning
+## Random Forest with OBB Error
 
+::: {.callout-tip title="Why OOB Tuning is Faster"}
 - Instead of re-fitting each forest 10 times across 10 folds, you evaluate each candidate forest exactly ONCE on its own built-in Out-of-Bag (OOB) predictions.
 
 - Because OOB estimation calculates out-of-sample error during training for free, you get 10x speedups (or more) while still finding optimal hyperparameters.
 
-```         
+``` r
 Standard 10-Fold CV Search:
 Grid Choice 1 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests fit)
 Grid Choice 2 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests fit)
@@ -1615,8 +1887,8 @@ Grid Choice 2 ──► [Fit Fold 1] [Fit Fold 2] ... [Fit Fold 10]  (10 Forests
 OOB Validation Search:
 Grid Choice 1 ──► [Fit 1 Forest on Full Train Data] ──► Extract OOB Error  (1 Forest fit)
 Grid Choice 2 ──► [Fit 1 Forest on Full Train Data] ──► Extract OOB Error  (1 Forest fit)
-...
 ```
+:::
 
 If you evaluate 20 grid settings:
 
@@ -1624,30 +1896,29 @@ If you evaluate 20 grid settings:
 
 - **OOB Search:** Fits $20 \times 1 = \mathbf{20\text{ forests}}$ (**90% time reduction**).
 
-### Method 1: Using `apparent()` Resampling in `tidymodels`
+### Method 1: Using Custom Engine-Level OOB Evaluation Loop
 
-In `tidymodels`, the cleanest way to do OOB tuning is to pass `apparent()` as your resampling strategy inside `tune_grid()`.
+> To implement OOB tuning, we can create a custom loop that fits a Random Forest for each combination of hyperparameters in our grid and extracts the OOB error directly from the fitted model. This avoids the overhead of cross-validation and allows us to efficiently evaluate many hyperparameter combinations.
 
-When using `apparent()`, `tidymodels` fits each grid setting on the full training set once. Because `ranger` calculates OOB metrics during that fit, `tidymodels` extracts the OOB score directly:
+#### OBB Tuning Loop
 
-```{{r}}
-#| eval=false
+```{r rf-oob-tune}
 
 # Function to evaluate OOB error for a single grid row
 eval_oob <- function(mtry_val, min_n_val) {
   spec <- rand_forest(trees = 500, mtry = mtry_val, min_n = min_n_val) |>
     set_engine("ranger", oob.error = TRUE) |>
     set_mode("classification")
-  
+
   wf <- workflow() |>
     add_recipe(class_rec) |>
     add_model(spec)
-  
+
   fitted_wf <- fit(wf, data = camp_train)
-  
+
   # Extract the ranger engine object and its OOB prediction error
   ranger_obj <- extract_fit_engine(fitted_wf)
-  
+
   tibble(
     mtry = mtry_val,
     min_n = min_n_val,
@@ -1662,11 +1933,69 @@ oob_results <- purrr::map2_dfr(rf_grid$mtry, rf_grid$min_n, eval_oob)
 oob_results |> arrange(oob_error)
 ```
 
+::: callout-tip
+#### Insights from the Custom OOB Loop
+
+- **Parameter Alignment:** The lowest Out-of-Bag (OOB) error occurs at `mtry = 3` and `min_n = 17`.
+
+- Note that this is slightly different from the 10-Fold CV result (`mtry = 3`, `min_n = 30`), but the difference in OOB error is negligible.
+
+- Smaller mtry values (fewer features considered per split) reduce tree correlation, which is beneficial for ensemble performance.
+
+- Larger min_n values (larger minimum node size) prevent overfitting by limiting tree depth, which can improve generalization.
+
+- **Sensitivity / Stability Across the Grid:**
+
+- The OOB Error rate across the 9 grid combinations are tightly clustered, ranging from 0.135 to 0.137, indicating that the model's performance is relatively stable across a range of hyperparameter settings.
+
+- **Practical Implication:** This suggests that Random Forests are robust to hyperparameter choices, and even if the exact optimal parameters are not chosen, the model will still perform well.
+
+- **Computational Efficiency:** *OOB tuning* evaluated $9$ total models, whereas *10-fold CV* required $90$ fits. Both methods converged on similar parameter ranges, demonstrating that OOB error is an efficient, reliable proxy for model selection in tree ensembles.
+:::
+
+#### Finalizing the OOB-Tuned Model
+
+```{r rf-oob-final}
+# Extract the parameter combination with the lowest OOB error
+best_oob_rf_params <- oob_results |>
+  slice_min(order_by = oob_error, n = 1)
+
+# Finalize your existing rf_wf with the best hyperparameter settings
+final_obb_rf_wf <- finalize_workflow(rf_wf, best_oob_rf_params)
+
+# Fit the finalized workflow on the entire training set (camp_train)
+final_obb_rf_fit <- fit(final_obb_rf_wf, data = camp_train)
+
+# Generate predictions on the unseen test set (camp_test)
+rf_obb_preds <- augment(final_obb_rf_fit, new_data = camp_test)
+
+# Evaluate performance on the test set
+## Confusion Matrix
+rf_obb_preds |>
+  conf_mat(truth = purchased, estimate = .pred_class) |>
+  autoplot(type = "heatmap")
+
+## Overall Test Metrics (Accuracy, ROC AUC, Sensitivity, Specificity)
+rf_obb_preds |>
+  metric_set(accuracy, roc_auc, sens, spec)(
+    truth = purchased,
+    estimate = .pred_class,
+    .pred_yes
+  )
+```
+
+::: callout-tip
+#### Insights from the OOB-Tuned Model Performance
+
+- **Test Set Performance:** The OOB-tuned Random Forest achieved an accuracy of .813 and an ROC AUC of 0.802 on the unseen test set, which is slightly better than the performance of the 10-Fold CV-tuned model (accuracy = 0.805, ROC AUC = 0.799).
+:::
+
 ### Method 2: Relying on Robust Defaults (No Search Required)
 
-For many big data applications, **you don't even need a grid search at all**.
-
-Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradient Boosting (XGBoost) or Neural Networks—which fail completely if tuned poorly—Random Forests perform close to optimal using standard heuristics:
+::: {.callout-tip title="Why Defaults Work Well"}
+> For many big data applications, **you don't even need a grid search at all**.
+>
+> Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradient Boosting (XGBoost) or Neural Networks — which fail completely if tuned poorly — **Random Forests perform close to optimal using standard heuristics**:
 
 1.  **`trees` = 500 to 1,000:** More trees never cause overfitting; performance simply plateaus once the variance reduction reaches diminishing returns.
 
@@ -1675,12 +2004,13 @@ Random Forests are remarkably resilient to hyperparameter choices. Unlike Gradie
 3.  **`min_n` = 1 (classification) or 5 (regression):** Unpruned, deep trees decorrelate best when combined.
 
 If dataset scale makes grid searching prohibitive, fitting a **single 1,000-tree forest with default settings** delivers strong results in a fraction of the time.
+:::
 
 ```{r rf-default-hyper}
 
-# 1. Model Spec (OOB prediction mode)
+# Model Spec (OOB prediction mode)
 rf_default_spec <- rand_forest(
-  trees = 500,
+  trees = 1000,
   mtry = sqrt(15), #3.9
   min_n = 1 # classificaiton default
 ) |>
@@ -1693,16 +2023,15 @@ rf_default_wf <- workflow() |>
 
 rf_default_fit <- fit(rf_default_wf, data = camp_train)
 
-# Performance 
+# Performance
 rf_default_preds <- augment(rf_default_fit, new_data = camp_test)
 
-rf_default_preds |> 
+rf_default_preds |>
   metric_set(accuracy, roc_auc, sens, spec)(
     truth = purchased,
     estimate = .pred_class,
     .pred_yes
   )
-
 ```
 
 ### Model Comparison on Single Tree vs. RF with CV vs. RF with Default
@@ -1712,8 +2041,16 @@ rf_default_preds |>
 | **Accuracy** | 0.774 | **0.808** | 0.806 |
 | **ROC AUC** | 0.761 | **0.805** | 0.802 |
 
-::: {.callout-tip title="Takeaway for Class"}
-Compared with using time-consuming 10 Fold CV-tuned method, the default method reached similar performance faster.
+::: {.callout-tip title="Takeaway from the Three Random Forest Methods"}
+- Compared with using time-consuming 10 Fold CV-tuned method, the default method reached similar performance faster.
+
+- For large datasets, the default method is often sufficient to achieve strong predictive performance without the overhead of hyperparameter tuning.
+
+- The **OOB-tuned method slightly outperformed** both the CV-tuned and default methods, but the difference is marginal, suggesting that for many practical applications, using defaults or OOB tuning may be preferable due to computational efficiency.
+
+- By increasing tree size to 1,000 trees, we achieved a slight improvement that exceeds the performance of the 10-Fold CV-tuned model, demonstrating that more trees can help stabilize predictions.
+
+- **Practical Recommendation:** For large-scale applications, consider using **OOB tuning** or **robust defaults** to save time while still achieving competitive performance.
 :::
 
 ### Summary Table for Random Forest Tuning Strategy
@@ -1727,7 +2064,7 @@ Compared with using time-consuming 10 Fold CV-tuned method, the default method r
 
 ------------------------------------------------------------------------
 
-# Boosted Trees
+# **Boosted Trees**
 
 ## The Sequential Correction Idea
 
@@ -1751,13 +2088,13 @@ Each iteration corrects the mistakes of the previous ensemble — slowly buildin
 **`tree_depth`** — how deep each individual tree is. Boosting typically uses **shallow trees** (depth 1–6), unlike random forests which use full-depth trees. Shallow trees are weak learners — but boosting combines many of them into a strong ensemble. Deeper trees can model more complex interactions per step but increase overfitting risk.
 :::
 
-## AdaBoost (Adaptive Boosting)
+# **AdaBoost** (Adaptive Boosting)
 
-### What is AdaBoost?
+## What is AdaBoost?
 
 While Random Forests build hundreds of deep, independent trees in **parallel** (bagging), AdaBoost builds a chain of simple decision trees in **sequence** (boosting).
 
-#### The Core Mechanics
+### The Core Mechanics
 
 1.  **Start with Equal Weights:** Every observation in the training set starts with an equal weight.
 
@@ -1774,34 +2111,47 @@ While Random Forests build hundreds of deep, independent trees in **parallel** (
 5.  **Combine Predictions:** The final prediction is a **weighted vote** of all stumps. Stumps with lower overall error rates get a stronger vote in the final decision.
 
 ```         
-[ Stump 1 ] ──► Misclassified rows weighted UP ──► [ Stump 2 ] ──► Misclassified rows weighted UP ──► [ Stump 3 ] ...
+[ Stump 1 ] ──► Misclassified rows weighted UP ──► 
+[ Stump 2 ] ──► Misclassified rows weighted UP ──► 
+[ Stump 3 ] ...
 ```
 
-### Is AdaBoost "Better" Than Random Forest?
+## Is AdaBoost "Better" Than Random Forest?
 
 Short answer: Neither is strictly "better"—they trade off bias and variance differently.
 
-#### Why AdaBoost Can Beat Random Forest
+### AdaBoost vs. Random Forest
+
+| Comparison area | AdaBoost advantage | Random Forest advantage |
+|------------------------|------------------------|------------------------|
+| Bias and decision boundaries | AdaBoost can achieve lower bias because each new tree focuses on the errors made by earlier trees. This allows it to capture complex, nonlinear decision boundaries that a Random Forest may smooth over. | Random Forest may produce smoother, more stable decision boundaries because it averages predictions across many independently trained trees. |
+| Model parsimony | AdaBoost can sometimes reach high predictive accuracy with fewer total splits by combining many simple learners, such as decision stumps. | Random Forest usually relies on many deeper trees, so the overall model is less parsimonious even though each tree is trained independently. |
+| Sensitivity to noise and outliers | AdaBoost can be highly sensitive to mislabeled observations and outliers because it repeatedly increases the weight of cases that are misclassified. The model may overfocus on noisy observations and overfit. | Random Forest is generally more robust to noise and outliers because no single observation receives progressively increasing influence across the entire ensemble. |
+| Training process | AdaBoost trains trees sequentially. Each tree depends on the errors made by the previous trees. | Random Forest trees are independent and can be trained simultaneously across multiple CPU cores. |
+| Parallelization | Limited, because the next learner cannot be trained until the previous learner has finished. | Strong, because hundreds of trees can be fitted in parallel. |
+| Practical performance | AdaBoost may outperform Random Forest when the data are relatively clean and the signal is complex. | Random Forest often performs more reliably when the data contain noise, outliers, or mislabeled observations. |
+
+### Why AdaBoost Can Beat Random Forest
 
 - **Lower Bias:** Because each tree focuses specifically on what previous trees got wrong, boosting can fit complex, non-linear boundaries that a Random Forest might smooth over.
 
 - **Parsimony:** AdaBoost often achieves high accuracy with fewer splits overall than an unpruned forest.
 
-#### Why Random Forest Often Beats AdaBoost in Practice
+### Why Random Forest Often Beats AdaBoost in Practice
 
 - **Sensitivity to Noise and Outliers:** Because AdaBoost exponentially increases the weight of misclassified points, an outlier or mislabeled data point will get huge weight. The algorithm can become obsessed with fitting noisy observations, leading to **severe overfitting**.
 
 - **Parallelization:** Random Forest trains all 500 trees simultaneously across CPU cores. AdaBoost must wait for Stump 1 to finish before Stump 2 can evaluate errors.
 
-## Gradient Boosting: Learning from Residuals
+# **Gradient Boosting**: Learning from Residuals
 
-While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
+> While **AdaBoost** adjusts row weights to force subsequent trees to focus on hard cases, **Gradient Boosting (GBM)** takes a more direct mathematical approach: each new tree is trained to predict the **residuals** (the leftover prediction errors) of the ensemble built so far.
 
 - Gradient boosting for regression
 
 - Gradient boosting for classification
 
-### 1. The Core Intuition: Golfing Toward the Target
+## The Core Intuition: Golfing Toward the Target
 
 Think of Gradient Boosting like a golfer trying to hit a ball into a hole:
 
@@ -1815,39 +2165,47 @@ $$\text{Final Prediction} = \text{Shot}_1 + \text{Shot}_2 + \text{Shot}_3 + \dot
 
 ------------------------------------------------------------------------
 
-### 2. Step-by-Step Algorithm (Regression Example)
+## Step-by-Step Algorithm (Regression Example)
 
 To predict a continuous target variable $y$ using features $X$:
 
-#### Step 1: Initialize with a Baseline Constant
+**Step 1: Initialize with a Baseline Constant**
 
 Start with a single constant prediction $\hat{f}_0(x)$—typically the mean of $y$ for all observations:
 
 $$\hat{f}_0(x) = \bar{y}$$
 
-------------------------------------------------------------------------
-
-#### Step 2: Sequentially Fit Trees to Residuals
+**Step 2: Sequentially Fit Trees to Residuals**
 
 For $m = 1$ to $M$ (where $M$ is the total number of trees):
 
 1.  **Compute Pseudo-Residuals:** Calculate the difference between actual targets $y_i$ and current ensemble predictions $\hat{f}_{m-1}(x_i)$ for every observation $i$: $$r_{i,m} = y_i - \hat{f}_{m-1}(x_i)$$
 
-2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable.
+2.  **Fit a Decision Tree:** Fit a small, shallow decision tree $h_m(x)$ (typically 2 to 6 splits) using $X$ as predictors and **the residual** $r_{i,m}$ as the target variable instead of $y$.
+
+- **Terminal Node (Leaf) Outputs (**$γ_{j,m}$):The tree partitions the feature space into $J$ disjoint regions (leaves) $R_{1,m}, R_{2,m}, \dots, R_{J,m}$. For a standard squared-error loss, the optimal value assigned to each leaf $j$ is simply the average of the pseudo-residuals of the training samples that fall into that leaf:$$\gamma_{j,m} = \frac{1}{\vert{}R_{j,m}\vert{}} \sum_{i \in R_{j,m}} r_{i,m}$$
+- **Concrete Numeric Illustration**: Suppose in Step 1, the model overestimated Customer A's spend by $\$20$ ($r_{A,1} = -20$) and underestimated Customer B's spend by $\$30$ ($r_{B,1} = +30$).In Step 2, the tree splits on a feature (e.g., loyalty_tier = Gold vs. Non-Gold):
+
+```         
+**Leaf 1 (Non-Gold)**: Contains Customer A $\rightarrow$ Leaf output $\gamma_{1,1} = -20$.
+
+**Leaf 2 (Gold)**: Contains Customer B $\rightarrow$ Leaf output $\gamma_{2,1} = +30$. 
+
+ The new tree model is formally expressed as:
+```
+
+$$  h_m(x) = \sum_{j=1}^{J} \gamma_{j,m} \cdot I(x \in R_{j,m})
+  $$ (where $I(\cdot)$ is an indicator function equal to 1 if $x$ falls into leaf $R_{j,m}$, and 0 otherwise).
 
 3.  **Update the Ensemble with a Learning Rate (**$\eta$): Add the new tree's predictions scaled by a learning rate $\eta$ ($0 < \eta \le 1$, often $0.01$ to $0.1$): $$\hat{f}_m(x) = \hat{f}_{m-1}(x) + \eta \cdot h_m(x)$$
 
-------------------------------------------------------------------------
-
-#### Step 3: Output the Final Ensemble Model
+**Step 3: Output the Final Ensemble Model**
 
 After fitting $M$ trees, the final prediction is:
 
 $$\hat{f}(x) = \hat{f}_0(x) + \eta \sum_{m=1}^M h_m(x)$$
 
-------------------------------------------------------------------------
-
-### 3. Why the Name *Gradient* Boosting?
+## Why the Name *Gradient* Boosting?
 
 When using squared error loss $L(y, \hat{y}) = \frac{1}{2}(y - \hat{y})^2$, the negative gradient of the loss function with respect to the prediction is:
 
@@ -1863,19 +2221,17 @@ Because it uses gradient descent, Gradient Boosting works on **any differentiabl
 - **Classification:** Log-loss / Binary Cross-Entropy.
 :::
 
-------------------------------------------------------------------------
+## Key Hyperparameters in Gradient Boosting
 
-### 4. Key Hyperparameters in Gradient Boosting
-
-Unlike Random Forests—where adding more trees never causes overfitting—**Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
+Unlike Random Forests — where adding more trees never causes overfitting — **Gradient Boosting can easily overfit if left unchecked**. Tuning requires balancing three primary hyperparameters:
 
 | Parameter | Concept | `tidymodels` Argument | Role in the Ensemble |
-|------------------|------------------|------------------|-------------------|
+|-----------------|-----------------|-----------------|-----------------------|
 | $M$ | Number of Boosting Iterations | `trees` | Too few leads to underfitting; too many leads to overfitting. |
 | $\eta$ | Shrinkage / Learning Rate | `learn_rate` | Scales the contribution of each tree. Smaller values ($\eta = 0.01–0.1$) require more trees but yield better generalization. |
 | $d$ | Tree Depth | `tree_depth` | Controls maximum depth of each shallow tree. Often $d = 2–6$ (shallow trees control variance). |
 
-### 5. Summary: Bagging vs. Boosting Comparison
+## Summary Comparison: Bagging vs. Boosting Comparison
 
 | Property | Random Forest | Gradient Boosting |
 |---------------------|-----------------------|----------------------------|
@@ -1885,15 +2241,21 @@ Unlike Random Forests—where adding more trees never causes overfitting—**Gra
 | **Risk of Overfitting** | Low (adding trees stabilizes error) | High (requires early stopping / tuning $M$) |
 | **Tuning Sensitivity** | Low (defaults work well) | High (requires tuning `trees`, `learn_rate`, `tree_depth`) |
 
-### 6. Gradient Boosting vs. Adaboost
+## Gradient Boosting vs. Adaboost
 
 **Gradient Boosting is a generalization and upgrade of AdaBoost.** While AdaBoost was a brilliant proof-of-concept for sequential learning, Gradient Boosting replaced AdaBoost’s specific "reweighting" trick with a flexible mathematical framework based on gradient descent.
 
 ```         
-AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► [Tree 2 fits weighted data]  Gradient Boosting Strategy: [Tree 1] ──► Calculate errors (y - y_hat) ──► [Tree 2 fits directly to RESIDUALS]
+AdaBoost Strategy: 
+[Tree 1] ──► Find wrong rows ──► Increase row WEIGHTS ──► 
+[Tree 2 fits weighted data]  
+
+Gradient Boosting Strategy: 
+[Tree 1] ──► Calculate errors (y - y_hat) ──► 
+[Tree 2 fits directly to RESIDUALS]
 ```
 
-#### AdaBoost (Adaptive Boosting)
+**AdaBoost (Adaptive Boosting)**
 
 - **The Mechanism:** Starts with equal weights for every row. After fitting a tree (usually a 1-split decision stump), it **increases the weights of misclassified rows** and decreases the weights of correct ones.
 
@@ -1901,7 +2263,7 @@ AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEI
 
 - **Voting:** Final predictions are made via a **weighted vote**, where high-accuracy trees get more say than weaker trees.
 
-#### Gradient Boosting (GBM)
+**Gradient Boosting (GBM)**
 
 - **The Mechanism:** Instead of changing row weights, the next tree is trained to directly predict the **residuals** (the leftover mathematical error $y - \hat{y}$) of all previous trees combined.
 
@@ -1909,15 +2271,15 @@ AdaBoost Strategy: [Tree 1] ──► Find wrong rows ──► Increase row WEI
 
 - **Voting:** Final predictions are made by **adding up the outputs** of all trees scaled by a learning rate ($\eta$).
 
-### Is Gradient Boosting "Better" Than AdaBoost
+## Is Gradient Boosting "Better" Than AdaBoost
 
-#### A. Robustness to Noise and Outliers (The Major Flaw of AdaBoost)
+### A. Robustness to Noise and Outliers (The Major Flaw of AdaBoost)
 
 Because AdaBoost **exponentially increases** the weights of misclassified observations, an outlier or mislabeled data point will quickly dominate the weights. AdaBoost gets "obsessed" with fitting noise, leading to **severe overfitting**.
 
 Gradient Boosting, by contrast, uses differentiable loss functions (like Huber loss or absolute error) that can gracefully down-weight extreme outliers.
 
-#### B. Loss Function Flexibility
+### B. Loss Function Flexibility
 
 - **AdaBoost** is strictly tied to **exponential loss** (for classification) or square error loss variants.
 
@@ -1931,11 +2293,11 @@ Gradient Boosting, by contrast, uses differentiable loss functions (like Huber l
 
   - **Poisson / Tweedie:** For count data or insurance claims.
 
-#### C. Capacity to Scale & Complex Patterns
+### C. Capacity to Scale & Complex Patterns
 
 AdaBoost typically relies on **decision stumps** (trees with a depth of 1), which can struggle to capture complex higher-order feature interactions. Gradient Boosting uses shallow trees (depth 3–6), allowing it to model complex interactions while predicting fine-grained residual magnitudes rather than just binary directional corrections.
 
-### Core Comparison at a Glance
+## Core Comparison at a Glance
 
 |  |  |  |
 |--------------------|--------------------------|--------------------------|
@@ -1947,17 +2309,31 @@ AdaBoost typically relies on **decision stumps** (trees with a depth of 1), whic
 | **Flexibility** | Limited to exponential loss | Any differentiable loss function |
 | **Modern Usage** | Rarely used standalone today | Industry standard (via XGBoost, LightGBM, CatBoost) |
 
-## XGBoost: eXtreme Gradient Boosting
+# **XGBoost**: eXtreme Gradient Boosting
 
-While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
+> While standard **Gradient Boosting (GBM)** provided a revolutionary framework for learning from residuals, **XGBoost (eXtreme Gradient Boosting)** took the data science world by storm by redesigning both the **statistical formulation** and the **underlying engineering**.
+>
+> XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
 
-XGBoost isn't just a different implementation; it optimizes *how* trees are built, *how* complexity is penalized, and *how* computation is hardware-accelerated.
+::: {.callout-note title="Why XGBoost is Popular"}
+- **Performance:** XGBoost consistently wins Kaggle competitions and outperforms standard GBM implementations in both speed and accuracy.
 
-### 1. What Makes XGBoost "eXtreme"?
+  - The performance improvements of XGBoost over standard GBM are not just incremental; they are **orders of magnitude faster** and often yield **better predictive accuracy**.
 
-The primary distinction lies in three pillars: **Regularization**, **Second-Order Optimization**, and **System Engineering**.
+- **Flexibility:** It supports regression, classification, ranking, and user-defined loss functions.
 
-### 2. Statistical Innovations
+  - It also allows for custom evaluation metrics, enabling practitioners to optimize for business-specific objectives.
+
+- **Scalability:** XGBoost is designed to handle massive datasets efficiently, with built-in support for parallelization and distributed computing.
+
+  - It can scale to billions of rows and thousands of features, making it suitable for large-scale machine learning tasks.
+:::
+
+## Reasons Behind Performance, Flexibility, and Scalability
+
+The popularity of the XGBoost algorithm is due to its combination of **statistical innovations** (like regularization and second-order optimization) **algorithmic engineering** (like sparsity awareness and parallelization), and **system engineering** . These innovations make it a powerful tool for predictive modeling, especially in competitive machine learning scenarios.
+
+### Statistical Innovations
 
 #### A. Direct Regularization on Tree Structure
 
@@ -1972,8 +2348,6 @@ $$\Omega(h) = \gamma T + \frac{1}{2} \lambda \sum_{j=1}^T w_j^2 + \alpha \sum_{j
 - $T$ (Number of Leaves): $\gamma$ (gamma) penalizes adding new leaf nodes. A split is only allowed if the improvement in loss exceeds $\gamma$ (acting as automated pruning).
 - $w_j$ (Leaf Weights): $\lambda$ ($L_2$ Ridge penalty) and $\alpha$ ($L_1$ Lasso penalty) penalize extreme leaf prediction values, smoothing predictions and preventing individual leaves from overfitting to noisy data points.
 
-------------------------------------------------------------------------
-
 #### B. Second-Order Taylor Expansion (Gradients + Hessians)
 
 Standard Gradient Boosting relies on first-order derivatives (the direction of error, or gradients). XGBoost uses a **second-order Taylor expansion** to approximate the loss function:
@@ -1987,9 +2361,7 @@ $$L(y_i, \hat{y}_i^{(m)}) \approx L(y_i, \hat{y}_i^{(m-1)}) + g_i w + \frac{1}{2
 By using the Hessian ($h_i$), XGBoost measures how fast the gradient is changing. This gives the algorithm "Newton-Raphson" step sizes, allowing it to calculate the precise optimal leaf weights $w_j$ in far fewer boosting iterations than standard GBM.
 :::
 
-------------------------------------------------------------------------
-
-### 3. Algorithmic Innovations
+### Algorithmic Innovations
 
 #### A. Native Handling of Missing Values (Sparsity Awareness)
 
@@ -2008,7 +2380,17 @@ Borrowing directly from Random Forests, XGBoost supports:
 
 This double-subsampling decorrelates sequential trees further and speeds up execution time.
 
-### 4. System Engineering: Why It's Fast
+### System Engineering: Why It's Fast
+
+XGBoost is engineered for speed and efficiency, making it suitable for large-scale datasets. Key system-level optimizations include:
+
+- **Cache-Aware Block Structure:** XGBoost stores feature data in a block structure that is optimized for CPU cache usage, reducing memory access times.
+
+- **Parallelized Split Finding:** Instead of evaluating splits sequentially, XGBoost evaluates all possible split points across features in parallel, leveraging multi-core processors.
+
+- **Out-of-Core Computation:** For datasets that exceed RAM, XGBoost can perform computations directly from disk using efficient data structures and algorithms.
+
+Below is a comparison of how standard GBM and XGBoost handle split finding, parallelization, and hardware efficiency:
 
 | Feature | Standard GBM | XGBoost |
 |------------------------|------------------------|------------------------|
@@ -2016,7 +2398,70 @@ This double-subsampling decorrelates sequential trees further and speeds up exec
 | **Parallelization** | Sequential only (must wait for previous tree to finish). | Parallelized split finding across feature columns during node creation. |
 | **Hardware Efficiency** | Standard memory layout. | **Cache-aware block structure** loads feature data directly into CPU L1/L2 caches. |
 
-### 5. Key Hyperparameter Mapping (`tidymodels`)
+## How XGBoost Builds Trees: Similarity Scores & Output Values
+
+While standard decision trees split nodes using **Gini Impurity** or **Variance Reduction**, XGBoost uses the **Similarity Score** (derived directly from the Gradients $g_i$ and Hessians $h_i$) to evaluate splits and assign prediction values to leaf nodes.
+
+### Step 1: Calculate the Root Similarity Score
+
+For any collection of data points in a node, the **Similarity Score** measures how well the predictions in that node align with the true targets, adjusted by model complexity:
+
+$$\text{Similarity Score} = \frac{\left( \sum g_i \right)^2}{\sum h_i + \lambda}$$
+
+- $\sum g_i$: The sum of the first derivatives (residuals/errors) for all observations in the node.
+- $\sum h_i$: The sum of the second derivatives (hessians/curvature) for all observations in the node.
+- $\lambda$: The $L_2$ regularization parameter (higher $\lambda$ reduces the similarity score and shrinks trees).
+
+### Step 2: Evaluate Split Quality (Gain)
+
+To determine whether to split a node into a **Left** and **Right** child, XGBoost calculates the **Gain** of the candidate split:
+
+$$\text{Gain} = \text{Similarity}_{\text{Left}} + \text{Similarity}_{\text{Right}} - \text{Similarity}_{\text{Root}}$$
+
+- If $\text{Gain} > 0$, splitting the node improves the objective function.
+- **Tree Pruning (**$\gamma$): XGBoost compares the calculated Gain to the regularization parameter $\gamma$ (gamma). If $\text{Gain} - \gamma < 0$, the split is pruned.
+
+### Step 3: Calculate Leaf Output Values (Predictions)
+
+Once the tree structure is finalized, each terminal leaf node $j$ is assigned a static prediction weight $w_j$ (**Output Value**):
+
+$$w_j = -\frac{\sum_{i \in \text{Leaf}_j} g_i}{\sum_{i \in \text{Leaf}_j} h_i + \lambda}$$
+
+This formula computes the exact step size (via the Newton-Raphson method) that minimizes the loss function for all samples landing in that specific leaf.
+
+### Step 4: Making Final Predictions (Sequential Ensemble)
+
+To make a prediction for a new observation, XGBoost sums the scaled outputs across all boosted trees:
+
+$$\hat{y}_i = \text{Base Score} + \eta \sum_{m=1}^M f_m(x_i)$$
+
+- **Base Score:** The initial prediction before any trees are built (commonly $0.5$ for classification or the mean of $y$ for regression).
+- $\eta$ (Eta / Learning Rate): Shrinks the contribution of each tree (typically $0.01$ to $0.3$) to ensure slow, robust learning.
+- $f_m(x_i)$: The output value $w_j$ produced by the $m$-th tree.
+
+## Regression vs. Classification in XGBoost
+
+While the tree-building math remains the same, the loss function changes the calculated Gradients ($g_i$) and Hessians ($h_i$), as well as how the final ensemble prediction is converted.
+
+::: {.callout-note title="XGBoost: Regression vs. Binary Classification" collapse="false"}
+While the structural mechanics (Similarity Scores, Gain, and Pruning) are identical, the underlying derivatives and final prediction transformations differ between tasks:
+
+| Component | Regression (`reg:squarederror`) | Binary Classification (`binary:logistic`) |
+|:-----------------------|:-----------------------|:-----------------------|
+| **Loss Function (**$L$) | Squared Error: $\frac{1}{2}(y_i - \hat{y}_i)^2$ | Binary Log Loss: $- [y_i \ln(p_i) + (1-y_i)\ln(1-p_i)]$ |
+| **Initial Base Score** | Mean target value ($\bar{y}$) | Base probability $0.5$ ($\text{Log-Odds} = 0$) |
+| **Gradient (**$g_i$) | $g_i = \hat{y}_i - y_i$ *(Negative residual)* | $g_i = p_i - y_i$ *(Error in probability)* |
+| **Hessian (**$h_i$) | $h_i = 1$ *(Constant curvature)* | $h_i = p_i(1 - p_i)$ *(Variance / Uncertainty)* |
+| **Leaf Output (**$w_j$) | Direct numeric value adjustment | Step adjustment in **Log-Odds space** |
+| **Final Prediction** | Sum of base score + shrunk leaf outputs: $\hat{y}_i = \text{Base} + \eta \sum f_m(x_i)$ | Transform raw log-odds via Sigmoid: $P(y=1) = \frac{1}{1 + e^{-(\text{Base Log-Odds} + \eta \sum f_m(x_i))}}$ |
+
+**Key Takeaways**
+
+1.  **Classification Trees Predict Log-Odds:** XGBoost builds trees on probability residuals, so leaf outputs ($w_j$) are calculated in log-odds space before being converted back to probabilities at the end using the logistic sigmoid function.
+2.  **Confidence-Weighted Splitting:** In classification, observations with high uncertainty ($p_i \approx 0.5$) yield maximum Hessian values ($h_i = 0.25$), heavily influencing the Similarity Score to focus tree splits on boundary cases.
+:::
+
+## Key Hyperparameter Mapping (`tidymodels`)
 
 When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, standard parameters map directly to XGBoost terms:
 
@@ -2030,7 +2475,7 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Data Fraction** | `subsample` | `sample_size` | Proportion of training rows sampled for each tree. |
 | **Complexity Loss** | `gamma` | `loss_reduction` | Minimum loss reduction required to make a further partition. |
 
-### 6. Summary Comparison: Decision Tree Family
+## Summary Comparison: Decision Tree Family
 
 | Algorithm | Model Building | Tree Depth | Overfitting Controls | Primary Strengths |
 |---------------|---------------|---------------|---------------|---------------|
@@ -2039,20 +2484,60 @@ When implementing XGBoost in R using `boost_tree()` with `engine = "xgboost"`, s
 | **Gradient Boosting** | Sequential (Residuals) | Shallow | Learning rate, early stopping | Low bias; adapts to hard cases |
 | **XGBoost** | Sequential (Gradients + Hessians) | Shallow / Medium | $L_1$/$L_2$ regularization, $\gamma$ pruning, subsampling | Peak predictive power; blazing speed on huge datasets |
 
-#### Fitting XGBoost
+## XGBoost Recipe
+
+### XGBoost Classification Recipe (purchased)
+
+```{r boost-class-recipe}
+# XGBoost requires dummy variables!
+boost_class_rec <- recipe(purchased ~ ., data = camp_train) |>
+  step_rm(log_avg_order_amt) |> 
+  update_role(customer_id, new_role = "ID") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |>
+  step_zv(all_predictors())
+
+boost_class_rec |> 
+  prep() |> 
+  bake(new_data = NULL) |> 
+  glimpse()
+```
+
+### XGBoost Regression Recipe (log_avg_order_amt)
+
+```{r boost-reg-recipe}
+boost_reg_rec <- recipe(log_avg_order_amt ~ ., data = camp_train) |>
+  step_rm(purchased) |> # Exclude classification outcome
+  step_rm(avg_order_amt) |> # Exclude raw dollar outcome
+  update_role(customer_id, new_role = "ID") |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_novel(all_nominal_predictors()) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> # MANDATORY for XGBoost
+  step_zv(all_predictors()) 
+
+boost_reg_rec |> 
+  prep() |> 
+  bake(new_data = NULL) |>
+  glimpse()
+```
+
+## Fitting XGBoost
 
 ```{r boost-fit}
 boost_spec <- boost_tree(
   trees = 500,
   tree_depth = tune(),
-  learn_rate = tune(),
-  min_n = tune()
+  learn_rate = tune(), # eta ( 0.01 - 0.3)
+  min_n = tune() # minimum number of data points: min_child_weight (5 - 30): minimum sum of Hessians in a child node
 ) |>
   set_engine("xgboost") |>
   set_mode("classification")
 
 boost_wf <- workflow() |>
-  add_recipe(class_rec) |>
+  add_recipe(boost_class_rec) |>
   add_model(boost_spec)
 
 # Small grid for demonstration
@@ -2082,9 +2567,10 @@ best_boost
 
 final_boost_wf <- finalize_workflow(boost_wf, best_boost)
 final_boost_fit <- fit(final_boost_wf, data = camp_train)
+final_boost_fit
 ```
 
-#### Boosted Tree Performance
+## Boosted Tree Performance
 
 ```{r boost-metrics}
 boost_preds <- augment(final_boost_fit, new_data = camp_test)
@@ -2097,7 +2583,7 @@ boost_preds |>
   )
 ```
 
-#### The `learn_rate` × `trees` Tradeoff
+## The `learn_rate` × `trees` Tradeoff
 
 ```{r learn-rate-effect}
 # Fit models with different learn_rate values at fixed tree_depth
@@ -2111,7 +2597,7 @@ fit_boost_lr <- function(lr) {
     set_engine("xgboost") |>
     set_mode("classification")
 
-  wf <- workflow() |> add_recipe(class_rec) |> add_model(spec)
+  wf <- workflow() |> add_recipe(boost_class_rec) |> add_model(spec)
   fit_obj <- fit(wf, data = camp_train)
 
   bind_rows(
@@ -2141,7 +2627,7 @@ Large `learn_rate` (0.30): training AUC is very high but test AUC may be lower �
 The practical recommendation: **use a small `learn_rate` (0.01–0.05) with more trees**. This is almost always the most reliable combination in marketing applications.
 :::
 
-#### Variable Importance
+## Variable Importance
 
 ```{r vip-boost, fig.height=6}
 final_boost_fit |>
@@ -2157,9 +2643,22 @@ final_boost_fit |>
   theme_minimal(base_size = 12)
 ```
 
-------------------------------------------------------------------------
+**How to Interpret the Elements**
 
-# Model Comparison
+- *Horizontal Bar Length* (Importance Metric):\
+  Because the default metric for XGBoost in vip() is **Gain**, longer bars indicate features that contributed most to reducing training loss (Log Loss for classification or MSE for regression) across all 500 trees.
+
+  $$\text{Gain} = \text{Similarity}_{\text{Left}} + \text{Similarity}_{\text{Right}} - \text{Similarity}_{\text{Root}}$$
+
+- *Top Feature* (At the Top of the Y-Axis):\
+  The top-ranked feature is your model’s single most influential predictor. Splits on this variable yielded the largest gains in node purity / error reduction.
+
+- *Relative Differences* (Between Features):\
+  The metric is comparative rather than absolute. If Feature A has a Gain score of 0.30 and Feature B has 0.10, Feature A contributed roughly three times as much total loss reduction to the ensemble as Feature B.
+
+**Key Takeaway:** The top features at the top of the chart drive the vast majority of XGBoost's predictive power. Features near the bottom contribute marginally to loss reduction and could potentially be removed in future iterations to simplify the pipeline without sacrificing model performance.
+
+# **Model Comparison**
 
 ## All Models on the Same Test Set
 
@@ -2273,9 +2772,187 @@ ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
   theme_minimal(base_size = 12)
 ```
 
+## Explaining Models {#sec-explaining-models}
+
+### Explainers for PDP and SHAP
+
+```{r explainer-setup}
+# Setup: one explainer, used for both PDP and SHAP
+#install.packages("DALEX")
+#install.packages("DALEXtra")
+library(DALEX)
+library(DALEXtra)
+library(shapviz)
+
+explainer_boost <- explain_tidymodels(
+  model = final_boost_fit,
+  data = camp_train |> select(-purchased), # Use RAW features here, not bake
+  y = as.numeric(camp_train$purchased == "yes"),
+  label = "XGBoost",
+  verbose = FALSE
+)
+
+```
+
+### Partial Dependence Plots (PDP) for Selected Predictors
+
+**Meaning of Partial Dependence Plots (PDPs)**:
+
+> The term Partial Dependence Plot (PDP) was introduced by statistician *Jerome H. Friedman* in his seminal 2001 paper on Gradient Boosting ("Greedy Function Approximation: A Gradient Boosting Machine").
+
+- The name comes directly from the mathematical concept of marginalizing out (or averaging over) all other variables to isolate the "partial" relationship between a subset of features and the prediction.
+
+- The resulting curve is "partial" because it shows only the marginal contribution of $X_S$ to the prediction, partialling out the influence of all other covariates by holding their overall population distribution fixed.
+
+```{r pdp-plot-age-income}
+# Calculate PDP for specific variables (e.g., age, income)
+pdp_results <- model_profile(
+  explainer = explainer_boost,
+  variables = c("age", "income"), # Replace with your variable names
+  type = "partial")
+
+# Plot the PDP profiles
+plot(pdp_results)
+```
+
+::: {.callout-note title="Interpreting PDPs"}
+#### Key Concepts for Reading the Plot
+
+- **X-Axis (Feature Values)**: Represents the actual range of values for a specific input variable (e.g., age from 18 to 70, or income from \$20k to \$150k).
+
+- **Y-Axis (Target Prediction)**: Represents the expected (average) predicted output for your model. Because your target purchased was converted to numeric 1 or 0, the y-axis represents the predicted probability of purchase (ranging between 0.0 and 1.0).
+
+- **The Solid Line (Partial Dependence Curve)**: Shows how the predicted probability changes on average as that specific feature increases, *while holding all other features at their average levels*.
+:::
+
+```{r pdp-plot-cart-adds-discount}
+# PDP — cart_adds_30d
+model_profile(
+  explainer_boost, 
+  variables = "cart_adds_30d", 
+  N = 500) |> # use a random sample of 500 observations for speed
+  plot()
+
+# PDP — discount_rate_seen (reveals the nonlinear interaction)
+model_profile(
+  explainer_boost, 
+  variables = "discount_rate_seen", 
+  N = NULL) |> # use all observations for this one
+  plot()
+```
+
+### SHAP beeswarm:
+
+#### Step 1: Calculate SHAP Values
+
+```{r shap-value}
+shap_raw <- predict_parts(
+  explainer_boost,
+  new_observation = camp_train |> select(-purchased),
+  type = "shap",
+  B = 50 #average over 50 different variable orderings to produce stable, precise estimates.
+)
+
+# Convert to a shapviz object for enhanced plotting
+shp <- shapviz(shap_raw) 
+plot(shap_raw)
+```
+
+#### Step 2: Global Interpretability (All Observations)
+
+##### A. Beeswarm Summary Plot\*\*
+
+> Shows feature importance alongside the direction and impact of feature values.
+
+```{r shap-beeswarm}
+# Beeswarm plot showing overall feature impact and value trends
+shp |> 
+  sv_importance(kind = "beeswarm") + 
+  labs(title = "XGBoost — SHAP Variable Importance (Gain)")
+```
+
+**Beeswarm Plot:**
+
+- Y-axis: Features ordered from top (most important) to bottom (least important).
+
+- X-axis: SHAP value. Points to the right of 0 increase purchase probability; points to the left decrease it.
+
+- Color: High feature values are typically red/purple, low values are blue.
+
+##### B. Global Feature Importance Bar Chart\*\*
+
+> Ranks features purely by their mean absolute SHAP value.
+
+```{r shap-global}
+# Simple bar chart of global feature importance
+sv_importance(shp, kind = "bar") +
+  labs(title = "XGBoost — SHAP Variable Importance (Gain)")
+```
+
+#### Step 3: Local Interpretability (Single Observation)
+
+> To explain why the model made a specific prediction for a single customer (e.g., the 1st row of your data):
+
+**How to Interpret the Full Narrative for Customer Row 10**
+
+- Start at the Baseline ($E[f(x)]$): Begin with the average customer expectation in log-odds.
+
+- Add/Subtract Feature Contributions: Walk line-by-line through each feature row. Each bar shifts the running total left or right by its SHAP value.
+
+- End at the Final Prediction ($f(x)$): The final score at the end of the waterfall represents Customer Row 10's total predicted score in log-odds:$$f(x) = E[f(x)] + \sum \text{SHAP values}$$ **Converting the Final Prediction to Probability**
+
+To get Customer Row 10's actual predicted purchase probability, apply the logistic transformation to the final $f(x)$ value: $$P(\text{Purchased} = \text{"yes"}) = \frac{1}{1 + e^{-f(x)}}$$Example: If $f(x) = 0.85$, then:$$P = \frac{1}{1 + e^{-0.85}} \approx \frac{1}{1 + 0.427} \approx 70.1\% \text{ probability of purchase}$$
+
+```{r shap-local-1}
+# Select a single customer/observation
+single_customer <- camp_train |> 
+  select(-purchased) |> 
+  slice(10)
+
+# Compute individual SHAP breakdown
+shap_single <- predict_parts(
+  explainer = explainer_boost,
+  new_observation = single_customer,
+  type = "shap"
+)
+
+# Plot Waterfall Chart showing baseline prediction -> feature contributions -> final score
+plot(shap_single)
+```
+
+```{r shap-local-2}
+# Step 1: compute SHAP for the single customer using shapviz directly
+xgb_model <- final_boost_fit |> extract_fit_engine()
+
+X_train <- boost_class_rec  |>
+  step_dummy(all_nominal_predictors(), -all_outcomes()) |> # Ensure categorical features are dummy-encoded
+  prep() |>
+  bake(new_data = camp_train) |>
+  select(-any_of(c("purchased", "customer_id"))) |> 
+  select(where(is.numeric)) |>
+  as.matrix()
+
+X_train |> glimpse()
+
+shap_obj <- shapviz(xgb_model, X_pred = X_train)
+
+# Step 2: waterfall for one specific customer (e.g., row 10)
+sv_waterfall(shap_obj, row_id = 10) +
+  labs(title = "SHAP Waterfall — Customer Row 10")
+```
+
+**Waterfall Plot (Single Customer):**
+
+- Starts at the dataset average prediction (intercept).
+
+- Green/positive bars push the prediction higher for that individual.
+
+- Red/negative bars push the prediction lower.
+
 ## Model Comparison Summary
 
 ```{r compare-table}
+
 all_model_metrics |>
   select(model, .metric, .estimate) |>
   pivot_wider(names_from = .metric, values_from = .estimate) |>
@@ -2293,12 +2970,12 @@ A single decision tree is a **high-variance** model — it can fit the training 
 
 The Lasso logistic regression (linear model) provides a useful baseline: if tree methods don't outperform it, the relationships in the data are likely approximately linear and the simpler model is preferable (parsimony).
 
-When tree methods do outperform Lasso — as they typically will here, given the nonlinear interactions built into the data-generating process — it's because they are *discovering the interactions automatically* rather than requiring the analyst to specify them in advance.
+If tree methods do outperform Lasso, it's because they are *discovering the interactions automatically* rather than requiring the analyst to specify them in advance.
 :::
 
 ------------------------------------------------------------------------
 
-# Summary
+# **Summary**
 
 ## Three Methods at a Glance
 
@@ -2317,22 +2994,7 @@ When tree methods do outperform Lasso — as they typically will here, given the
 | Maximum predictive accuracy; time to tune carefully | XGBoost |
 | Linear relationships dominate; many correlated predictors | Lasso LR (from Module 4) |
 
-## Recipe Checklist for Trees
-
-``` r
-recipe(outcome ~ ., data = train) |>
-  step_impute_median(all_numeric_predictors()) |>  # ✓ needed
-  step_unknown(all_nominal_predictors()) |          # ✓ production safety
-  step_dummy(all_nominal_predictors(),              # ✓ needed
-             one_hot = TRUE) |                      # ✓ helps trees
-  step_zv(all_predictors())                         # ✓ safety net
-  # step_normalize()  ← NOT needed for trees
-  # step_log()        ← NOT needed for predictors (rank-invariant)
-```
-
-------------------------------------------------------------------------
-
-# Exercises
+# **Exercises**
 
 ## ✏️ Exercise 6.1 — Decision Tree Pruning
 
@@ -2398,10 +3060,3 @@ Using 10-fold cross-validation (the `camp_folds` object), compare all four model
 # Your code here
 
 ```
-
-# Appendix {.unnumbered}
-
-## Repository Links
-
-- **Published Page:** [m06_trees_ensembles.html](https://jakevns.github.io/trees-ensembles/m06_trees_ensembles.html)
-- **GitHub repository:** [jakevns/trees-ensembles](https://github.com/jakevns/trees-ensembles)
